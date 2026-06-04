@@ -141,7 +141,6 @@ class RenameListModal(discord.ui.Modal, title="تغيير اسم اللستة"):
             save_data(data)
             
             await return_to_main_panel(interaction)
-            await interaction.followup.send(f"✅ تم تغيير اسم اللستة بنجاح إلى **{new_list_name}**!", ephemeral=True)
 
 class RateItemModal(discord.ui.Modal, title="تقييم العمل بالنجوم"):
     item_number = discord.ui.TextInput(label="رقم الفيلم المراد تقييمه", placeholder="مثال: 1", required=True)
@@ -531,7 +530,6 @@ async def cmd_panel(interaction: discord.Interaction):
         return
     await interaction.response.defer(ephemeral=True)
     await refresh_panel(interaction.guild, interaction.channel)
-    await interaction.followup.send("تم تحديث الواجهة الرسمية بنجاح.", ephemeral=True)
 
 @tree.command(name="list_create", description="Create a new category.")
 @app_commands.describe(name="Category name")
@@ -545,7 +543,7 @@ async def cmd_list_create(interaction: discord.Interaction, name: str):
         return
     data["lists"][name] = {"description": "", "items": []}
     save_data(data)
-    await interaction.response.send_message(f"تم إنشاء القائمة **{name}** بنجاح!", ephemeral=True)
+    await interaction.response.defer(ephemeral=True)
 
 TOKEN = os.environ.get("DISCORD_TOKEN")
 bot.run(TOKEN)
