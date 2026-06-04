@@ -36,52 +36,49 @@ def get_poster(item) -> str:
 def get_desc(item) -> str:
     return item.get("desc", "") if isinstance(item, dict) else ""
 
-# ─── Letterboxd Grid Embed (عرض شبكي مكثف) ───────────────────
-def build_letterboxd_embed(list_name: str, items: list) -> discord.Embed:
-    embed = discord.Embed(
-        title=list_name,
-        color=0x111111
-    )
-    
+# ─── Premium Letterboxd Grid (حل مشكلة ظهور كل البوسترات بشكل فخم) ───
+def build_premium_cinema_embeds(list_name: str, items: list) -> list[discord.Embed]:
     if not items:
-        embed.description = "القائمة فارغة حالياً."
-        return embed
-
-    # نظام العرض الأفقي والطولي (Grid) باستخدام الـ Fields
-    # يتم تقسيم العناصر إلى أعمدة بجانب بعضها لتقليل طول الرسالة
-    for i, item in enumerate(items):
+        embed = discord.Embed(
+            title=list_name, 
+            description="هذه القائمة فارغة حالياً.", 
+            color=0x1a1a1a
+        )
+        return [embed]
+    
+    embeds = []
+    # ديسكورد يسمح بإرسال حتى 10 Embeds في الرسالة الواحدة تحت بعضها مباشرة
+    # قمنا باستغلالها ليعرض كل فيلم كبوستر مستقل وكبير
+    for i, item in enumerate(items[:10]): 
         title = get_title(item)
         desc = get_desc(item)
         poster = get_poster(item)
         
-        # تجهيز نص الحقل المخصص للفيلم (الاسم ورابط البوستر مدمجين بشكل أنيق)
-        field_value = ""
-        if desc:
-            field_value += f"{desc}\n"
-        if poster:
-            field_value += f"[البوستر 🖼️]({poster})"
+        # كارت فيلم نظيف جداً وفخم
+        embed = discord.Embed(color=0x1a1a1a)
+        
+        if i == 0:
+            # أول فيلم يحمل اسم اللستة الرئيسية كعنوان علوي فخم
+            embed.title = f"{list_name.upper()}  •  {i+1:02d}. {title}"
         else:
-            field_value += "*لا يوجد بوستر*"
-
-        # تفعيل inline=True لجعله ينعرض بشكل أفقي وعمودي ممتلئ (3 عناصر في كل سطر تلقائياً)
-        embed.add_field(
-            name=f"{i+1:02d}. {title}",
-            value=field_value,
-            inline=True
-        )
-
-    # وضع بوستر آخر فيلم تمت إضافته كصورة عريضة بالأسفل لإعطاء مظهر Letterboxd الفخم
-    last_poster = get_poster(items[-1])
-    if last_poster:
-        embed.set_image(url=last_poster)
-
-    return embed
+            embed.title = f"{i+1:02d}. {title}"
+            
+        if desc:
+            embed.description = f"*{desc}*"
+            
+        if poster:
+            # البوستر يظهر هنا بشكل كبير وممتلئ لكل فيلم على حدة وبدون أي مشاكل!
+            embed.set_image(url=poster)
+            
+        embeds.append(embed)
+        
+    return embeds
 
 # ─── Modals ───────────────────────────────────────────────
-class AddItemModal(discord.ui.Modal, title="إضافة"):
-    item_title = discord.ui.TextInput(label="الاسم", placeholder="اسم الفيلم أو العرض", required=True)
-    item_desc = discord.ui.TextInput(label="الوصف", style=discord.TextStyle.paragraph, required=False)
-    item_poster = discord.ui.TextInput(label="رابط البوستر", placeholder="https://...", required=False)
+class AddItemModal(discord.ui.Modal, title="إضافة فيلم"):
+    item_title = discord.ui.TextInput(label="اسم الفيلم", required=True)
+    item_desc = discord.ui.TextInput(label="الوصف أو التقييم", style=discord.TextStyle.paragraph, required=False)
+    item_poster = discord.ui.TextInput(label="رابط صورة البوستر المباشر", placeholder="https://...", required=False)
 
     def __init__(self, list_name: str, list_names: list[str]):
         super().__init__()
@@ -99,14 +96,14 @@ class AddItemModal(discord.ui.Modal, title="إضافة"):
             save_data(data)
             
             items = data["lists"][self.list_name]["items"]
-            embed = build_letterboxd_embed(self.list_name, items)
+            embeds = build_premium_cinema_embeds(self.list_name, items)
             view = ListView(self.list_name, items, can_manage(interaction.user), self.list_names)
-            await interaction.response.edit_message(embed=embed, view=view)
+            await interaction.response.edit_message(embeds=embeds, view=view)
         else:
             await interaction.response.send_message("خطأ: القائمة غير موجودة.", ephemeral=True)
 
-class RemoveItemModal(discord.ui.Modal, title="حذف"):
-    item_number = discord.ui.TextInput(label="رقم العنصر للحذف", placeholder="مثال: 1", required=True)
+class RemoveItemModal(discord.ui.Modal, title="حذف فيلم"):
+    item_number = discord.ui.TextInput(label="رقم الفيلم في القائمة", placeholder="مثال: 1", required=True)
 
     def __init__(self, list_name: str, list_names: list[str]):
         super().__init__()
@@ -130,11 +127,11 @@ class RemoveItemModal(discord.ui.Modal, title="حذف"):
         items.pop(num - 1)
         save_data(data)
         
-        embed = build_letterboxd_embed(self.list_name, items)
+        embeds = build_premium_cinema_embeds(self.list_name, items)
         view = ListView(self.list_name, items, can_manage(interaction.user), self.list_names)
-        await interaction.response.edit_message(embed=embed, view=view)
+        await interaction.response.edit_message(embeds=embeds, view=view)
 
-# ─── Manage View ──────────────────────────────────────────
+# ─── Manage Dashboard View ────────────────────────────────
 class ManageDashboardView(discord.ui.View):
     def __init__(self, list_name: str, list_names: list[str]):
         super().__init__(timeout=60)
@@ -149,7 +146,7 @@ class ManageDashboardView(discord.ui.View):
     async def remove_item_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(RemoveItemModal(self.list_name, self.list_names))
 
-    @discord.ui.button(label="حذف القائمة نهائياً", style=discord.ButtonStyle.danger, row=0)
+    @discord.ui.button(label="حذف اللستة كاملة", style=discord.ButtonStyle.danger, row=0)
     async def delete_list_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         data = load_data()
         if self.list_name in data["lists"]:
@@ -157,35 +154,35 @@ class ManageDashboardView(discord.ui.View):
             save_data(data)
         await return_to_main_panel(interaction)
 
-    @discord.ui.button(label="العودة للتصفح", style=discord.ButtonStyle.primary, row=1)
+    @discord.ui.button(label="← عودة للتصفح", style=discord.ButtonStyle.primary, row=1)
     async def back_to_view(self, interaction: discord.Interaction, button: discord.ui.Button):
         data = load_data()
         items = data["lists"].get(self.list_name, {}).get("items", [])
-        embed = build_letterboxd_embed(self.list_name, items)
+        embeds = build_premium_cinema_embeds(self.list_name, items)
         view = ListView(self.list_name, items, can_manage(interaction.user), self.list_names)
-        await interaction.response.edit_message(embed=embed, view=view)
+        await interaction.response.edit_message(embeds=embeds, view=view)
 
-# ─── Dynamic List View (التنقل الدائم دون اختفاء الرئيسية) ───
+# ─── Dynamic List View (واجهة العرض الاحترافية الثابتة) ───
 class ListView(discord.ui.View):
     def __init__(self, current_list_name: str, items: list, is_manager: bool, list_names: list[str]):
         super().__init__(timeout=None)
         self.current_list_name = current_list_name
         self.list_names = list_names
         
-        # سطر 0: أزرار التحكم الخاصة باللستة المفتوحة حالياً
+        # سطر الإدارة الأساسي (رسمي ومسطح بالكامل)
         if is_manager:
             self.add_item(ManageButton(current_list_name, list_names))
         self.add_item(HomeButton())
 
-        # سطر 1 وأعلى: حقن أزرار اللستات الرئيسية لتبقى ثابتة دائماً حتى لو كنت بداخل أي لستة
+        # سطر تصنيفات اللستات لتبديل سريع ومباشر بدون مغادرة الصفحة
         for name in list_names:
-            # تمييز اللستة المفتوحة حالياً بجعل زرها باللون الأزرق (Primary) والبقية رمادي
-            style = discord.ButtonStyle.primary if name == current_list_name else discord.ButtonStyle.secondary
+            # تمييز اللستة المفتوحة حالياً باللون الأخضر والرمادي للبقية
+            style = discord.ButtonStyle.success if name == current_list_name else discord.ButtonStyle.secondary
             btn = discord.ui.Button(
                 label=name,
                 custom_id=f"quick_nav_{name}",
                 style=style,
-                row=1 if len(list_names) <= 5 else 2  # توزيع الأسطر ديناميكياً لتفادي الامتلاء
+                row=1 if len(list_names) <= 5 else 2
             )
             btn.callback = self.make_navigation_callback(name)
             self.add_item(btn)
@@ -199,12 +196,12 @@ class ListView(discord.ui.View):
                 return
             items = lst.get("items", [])
             
-            embed = build_letterboxd_embed(name, items)
+            embeds = build_premium_cinema_embeds(name, items)
             view  = ListView(name, items, can_manage(interaction.user), self.list_names)
-            await interaction.response.edit_message(embed=embed, view=view)
+            await interaction.response.edit_message(embeds=embeds, view=view)
         return callback
 
-# ─── Specialized Buttons ──────────────────────────────────
+# ─── Specialized Panel Buttons ────────────────────────────
 class ManageButton(discord.ui.Button):
     def __init__(self, list_name: str, list_names: list[str]):
         super().__init__(label="إدارة القائمة", style=discord.ButtonStyle.danger, row=0)
@@ -214,19 +211,19 @@ class ManageButton(discord.ui.Button):
     async def callback(self, interaction: discord.Interaction):
         embed = discord.Embed(
             title=f"إدارة — {self.list_name}",
-            description="التحكم الكامل بمحتويات القائمة الحالية من خلال الأزرار أدناه.",
-            color=0x111111
+            description="التحكم بمحتوى وتفاصيل القائمة الحالية بشكل مباشر ونظيف.",
+            color=0x1a1a1a
         )
-        await interaction.response.edit_message(embed=embed, view=ManageDashboardView(self.list_name, self.list_names))
+        await interaction.response.edit_message(embed=[embed], view=ManageDashboardView(self.list_name, self.list_names))
 
 class HomeButton(discord.ui.Button):
     def __init__(self):
-        super().__init__(label="الرئيسية", style=discord.ButtonStyle.success, row=0)
+        super().__init__(label="الرئيسية", style=discord.ButtonStyle.primary, row=0)
 
     async def callback(self, interaction: discord.Interaction):
         await return_to_main_panel(interaction)
 
-# ─── Main Panel View (الواجهة الأساسية) ─────────────────────
+# ─── Main Panel View ──────────────────────────────────────
 class PanelView(discord.ui.View):
     def __init__(self, list_names: list[str]):
         super().__init__(timeout=None)
@@ -249,9 +246,9 @@ class PanelView(discord.ui.View):
                 return
             items = lst.get("items", [])
             
-            embed = build_letterboxd_embed(name, items)
+            embeds = build_premium_cinema_embeds(name, items)
             view  = ListView(name, items, can_manage(interaction.user), self.list_names)
-            await interaction.response.edit_message(embed=embed, view=view)
+            await interaction.response.edit_message(embeds=embeds, view=view)
         return callback
 
 # ─── Return to Main Dashboard ─────────────────────────────
@@ -259,18 +256,19 @@ async def return_to_main_panel(interaction: discord.Interaction):
     data       = load_data()
     list_names = list(data["lists"].keys())
 
+    # واجهة رئيسية رسمية، نظيفة، وبارزة جداً للعين تليق بسيرفر احترافي
     if list_names:
-        lines = "\n".join(f"**{k.upper()}** — `{len(v.get('items', []))}`" for k, v in data["lists"].items())
+        lines = "\n".join(f"▫️  **{k.upper()}** —  `{len(v.get('items', []))} Entries`" for k, v in data["lists"].items())
     else:
-        lines = "لا توجد قوائم متوفرة."
+        lines = "لا توجد قوائم متوفرة حالياً."
 
     embed = discord.Embed(
         title="Wonderland Lists",
-        description=lines,
-        color=0x111111
+        description=f"\n{lines}\n",
+        color=0x1a1a1a
     )
     view = PanelView(list_names)
-    await interaction.response.edit_message(embed=embed, view=view)
+    await interaction.response.edit_message(embed=[embed], view=view)
 
 # ─── Panel refresh ────────────────────────────────────────
 async def refresh_panel(guild: discord.Guild, channel: discord.TextChannel):
@@ -278,14 +276,14 @@ async def refresh_panel(guild: discord.Guild, channel: discord.TextChannel):
     list_names = list(data["lists"].keys())
 
     if list_names:
-        lines = "\n".join(f"**{k.upper()}** — `{len(v.get('items', []))}`" for k, v in data["lists"].items())
+        lines = "\n".join(f"▫️  **{k.upper()}** —  `{len(v.get('items', []))} Entries`" for k, v in data["lists"].items())
     else:
-        lines = "لا توجد قوائم متوفرة."
+        lines = "لا توجد قوائم متوفرة حالياً."
 
     embed = discord.Embed(
         title="Wonderland Lists",
-        description=lines,
-        color=0x111111
+        description=f"\n{lines}\n",
+        color=0x1a1a1a
     )
 
     panel_info = data.get("panel_message", {})
@@ -296,12 +294,12 @@ async def refresh_panel(guild: discord.Guild, channel: discord.TextChannel):
     if old_msg_id:
         try:
             old_msg = await channel.fetch_message(old_msg_id)
-            await old_msg.edit(embed=embed, view=view)
+            await old_msg.edit(embed=[embed], view=view)
             return
         except discord.NotFound:
             pass
 
-    msg = await channel.send(embed=embed, view=view)
+    msg = await channel.send(embed=[embed], view=view)
     data.setdefault("panel_message", {})[guild_key] = msg.id
     save_data(data)
 
@@ -327,7 +325,7 @@ async def cmd_panel(interaction: discord.Interaction):
         return
     await interaction.response.defer(ephemeral=True)
     await refresh_panel(interaction.guild, interaction.channel)
-    await interaction.followup.send("تم تحديث الواجهة.", ephemeral=True)
+    await interaction.followup.send("تم تحديث الواجهة الرسمية بنجاح.", ephemeral=True)
 
 @tree.command(name="list_create", description="Create a new category.")
 @app_commands.describe(name="Category name")
