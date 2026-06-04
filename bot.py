@@ -11,14 +11,14 @@ MANAGER_ROLE_NAME = "Archive Manager"
 
 # ─── Data helpers ─────────────────────────────────────────
 def load_data() -> dict:
-    Path("data").mkdir(exist_ok=True)
+    Path("data").mkdir(keep_parents=True, parents=True, exist_ok=True)
     if not os.path.exists(DATA_FILE):
         return {"lists": {}, "panel_message": {}}
     with open(DATA_FILE, "r", encoding="utf-8") as f:
         return json.load(f)
 
 def save_data(data: dict):
-    Path("data").mkdir(exist_ok=True)
+    Path("data").mkdir(keep_parents=True, parents=True, exist_ok=True)
     with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
@@ -36,7 +36,7 @@ def get_poster(item) -> str:
 def get_desc(item) -> str:
     return item.get("desc", "") if isinstance(item, dict) else ""
 
-# ─── Premium Letterboxd Grid (حل مشكلة ظهور كل البوسترات بشكل فخم) ───
+# ─── Premium Letterboxd Grid ──────────────────────────────
 def build_premium_cinema_embeds(list_name: str, items: list) -> list[discord.Embed]:
     if not items:
         embed = discord.Embed(
@@ -47,18 +47,14 @@ def build_premium_cinema_embeds(list_name: str, items: list) -> list[discord.Emb
         return [embed]
     
     embeds = []
-    # ديسكورد يسمح بإرسال حتى 10 Embeds في الرسالة الواحدة تحت بعضها مباشرة
-    # قمنا باستغلالها ليعرض كل فيلم كبوستر مستقل وكبير
     for i, item in enumerate(items[:10]): 
         title = get_title(item)
         desc = get_desc(item)
         poster = get_poster(item)
         
-        # كارت فيلم نظيف جداً وفخم
         embed = discord.Embed(color=0x1a1a1a)
         
         if i == 0:
-            # أول فيلم يحمل اسم اللستة الرئيسية كعنوان علوي فخم
             embed.title = f"{list_name.upper()}  •  {i+1:02d}. {title}"
         else:
             embed.title = f"{i+1:02d}. {title}"
@@ -67,7 +63,6 @@ def build_premium_cinema_embeds(list_name: str, items: list) -> list[discord.Emb
             embed.description = f"*{desc}*"
             
         if poster:
-            # البوستر يظهر هنا بشكل كبير وممتلئ لكل فيلم على حدة وبدون أي مشاكل!
             embed.set_image(url=poster)
             
         embeds.append(embed)
@@ -162,21 +157,18 @@ class ManageDashboardView(discord.ui.View):
         view = ListView(self.list_name, items, can_manage(interaction.user), self.list_names)
         await interaction.response.edit_message(embeds=embeds, view=view)
 
-# ─── Dynamic List View (واجهة العرض الاحترافية الثابتة) ───
+# ─── Dynamic List View ────────────────────────────────────
 class ListView(discord.ui.View):
     def __init__(self, current_list_name: str, items: list, is_manager: bool, list_names: list[str]):
         super().__init__(timeout=None)
         self.current_list_name = current_list_name
         self.list_names = list_names
         
-        # سطر الإدارة الأساسي (رسمي ومسطح بالكامل)
         if is_manager:
             self.add_item(ManageButton(current_list_name, list_names))
         self.add_item(HomeButton())
 
-        # سطر تصنيفات اللستات لتبديل سريع ومباشر بدون مغادرة الصفحة
         for name in list_names:
-            # تمييز اللستة المفتوحة حالياً باللون الأخضر والرمادي للبقية
             style = discord.ButtonStyle.success if name == current_list_name else discord.ButtonStyle.secondary
             btn = discord.ui.Button(
                 label=name,
@@ -214,7 +206,8 @@ class ManageButton(discord.ui.Button):
             description="التحكم بمحتوى وتفاصيل القائمة الحالية بشكل مباشر ونظيف.",
             color=0x1a1a1a
         )
-        await interaction.response.edit_message(embed=[embed], view=ManageDashboardView(self.list_name, self.list_names))
+        # تم تصحيح المعرّف هنا إلى embeds=
+        await interaction.response.edit_message(embeds=[embed], view=ManageDashboardView(self.list_name, self.list_names))
 
 class HomeButton(discord.ui.Button):
     def __init__(self):
@@ -256,7 +249,6 @@ async def return_to_main_panel(interaction: discord.Interaction):
     data       = load_data()
     list_names = list(data["lists"].keys())
 
-    # واجهة رئيسية رسمية، نظيفة، وبارزة جداً للعين تليق بسيرفر احترافي
     if list_names:
         lines = "\n".join(f"▫️  **{k.upper()}** —  `{len(v.get('items', []))} Entries`" for k, v in data["lists"].items())
     else:
@@ -268,7 +260,8 @@ async def return_to_main_panel(interaction: discord.Interaction):
         color=0x1a1a1a
     )
     view = PanelView(list_names)
-    await interaction.response.edit_message(embed=[embed], view=view)
+    # تم تصحيح المعرّف هنا إلى embeds=
+    await interaction.response.edit_message(embeds=[embed], view=view)
 
 # ─── Panel refresh ────────────────────────────────────────
 async def refresh_panel(guild: discord.Guild, channel: discord.TextChannel):
@@ -294,12 +287,14 @@ async def refresh_panel(guild: discord.Guild, channel: discord.TextChannel):
     if old_msg_id:
         try:
             old_msg = await channel.fetch_message(old_msg_id)
-            await old_msg.edit(embed=[embed], view=view)
+            # تم تصحيح المعرّف هنا إلى embeds=
+            await old_msg.edit(embeds=[embed], view=view)
             return
         except discord.NotFound:
             pass
 
-    msg = await channel.send(embed=[embed], view=view)
+    # هنا نرسل الـ embed الأول كبداية للوحة التحكم الأساسية
+    msg = await channel.send(embed=embed, view=view)
     data.setdefault("panel_message", {})[guild_key] = msg.id
     save_data(data)
 
