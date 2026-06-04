@@ -11,14 +11,14 @@ MANAGER_ROLE_NAME = "Archive Manager"
 
 # ─── Data helpers ─────────────────────────────────────────
 def load_data() -> dict:
-    Path("data").mkdir(keep_parents=True, parents=True, exist_ok=True)
+    Path("data").mkdir(parents=True, exist_ok=True)
     if not os.path.exists(DATA_FILE):
         return {"lists": {}, "panel_message": {}}
     with open(DATA_FILE, "r", encoding="utf-8") as f:
         return json.load(f)
 
 def save_data(data: dict):
-    Path("data").mkdir(keep_parents=True, parents=True, exist_ok=True)
+    Path("data").mkdir(parents=True, exist_ok=True)
     with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
@@ -36,44 +36,41 @@ def get_poster(item) -> str:
 def get_desc(item) -> str:
     return item.get("desc", "") if isinstance(item, dict) else ""
 
-# ─── Premium Letterboxd Grid ──────────────────────────────
-def build_premium_cinema_embeds(list_name: str, items: list) -> list[discord.Embed]:
-    if not items:
-        embed = discord.Embed(
-            title=list_name, 
-            description="هذه القائمة فارغة حالياً.", 
-            color=0x1a1a1a
-        )
-        return [embed]
+# ─── Ultra Light Cinema Embed (تصميم خفيف وسريع) ───────────
+def build_light_cinema_embed(list_name: str, items: list) -> discord.Embed:
+    embed = discord.Embed(
+        title=f"Wonderland • {list_name.upper()}",
+        color=0x1a1a1a
+    )
     
-    embeds = []
-    for i, item in enumerate(items[:10]): 
+    if not items:
+        embed.description = "هذه القائمة فارغة حالياً."
+        return embed
+
+    description_lines = []
+    # عرض الأفلام بشكل طولي مدمج وأنيق لتقليل الحجم وتسريع الاستجابة
+    for i, item in enumerate(items):
         title = get_title(item)
         desc = get_desc(item)
         poster = get_poster(item)
         
-        embed = discord.Embed(color=0x1a1a1a)
-        
-        if i == 0:
-            embed.title = f"{list_name.upper()}  •  {i+1:02d}. {title}"
-        else:
-            embed.title = f"{i+1:02d}. {title}"
-            
+        # تنسيق السطر الأساسي للفيلم
+        line = f"**{i+1:02d}. {title}**"
         if desc:
-            embed.description = f"*{desc}*"
-            
+            line += f" — *{desc}*"
         if poster:
-            embed.set_image(url=poster)
+            line += f"  `[ [البوستر]({poster}) ]`"
             
-        embeds.append(embed)
-        
-    return embeds
+        description_lines.append(line)
+
+    embed.description = "\n\n".join(description_lines)
+    return embed
 
 # ─── Modals ───────────────────────────────────────────────
 class AddItemModal(discord.ui.Modal, title="إضافة فيلم"):
     item_title = discord.ui.TextInput(label="اسم الفيلم", required=True)
     item_desc = discord.ui.TextInput(label="الوصف أو التقييم", style=discord.TextStyle.paragraph, required=False)
-    item_poster = discord.ui.TextInput(label="رابط صورة البوستر المباشر", placeholder="https://...", required=False)
+    item_poster = discord.ui.TextInput(label="رابط صورة البوستر", placeholder="https://...", required=False)
 
     def __init__(self, list_name: str, list_names: list[str]):
         super().__init__()
@@ -91,9 +88,9 @@ class AddItemModal(discord.ui.Modal, title="إضافة فيلم"):
             save_data(data)
             
             items = data["lists"][self.list_name]["items"]
-            embeds = build_premium_cinema_embeds(self.list_name, items)
+            embed = build_light_cinema_embed(self.list_name, items)
             view = ListView(self.list_name, items, can_manage(interaction.user), self.list_names)
-            await interaction.response.edit_message(embeds=embeds, view=view)
+            await interaction.response.edit_message(embed=embed, view=view)
         else:
             await interaction.response.send_message("خطأ: القائمة غير موجودة.", ephemeral=True)
 
@@ -122,9 +119,9 @@ class RemoveItemModal(discord.ui.Modal, title="حذف فيلم"):
         items.pop(num - 1)
         save_data(data)
         
-        embeds = build_premium_cinema_embeds(self.list_name, items)
+        embed = build_light_cinema_embed(self.list_name, items)
         view = ListView(self.list_name, items, can_manage(interaction.user), self.list_names)
-        await interaction.response.edit_message(embeds=embeds, view=view)
+        await interaction.response.edit_message(embed=embed, view=view)
 
 # ─── Manage Dashboard View ────────────────────────────────
 class ManageDashboardView(discord.ui.View):
@@ -153,11 +150,11 @@ class ManageDashboardView(discord.ui.View):
     async def back_to_view(self, interaction: discord.Interaction, button: discord.ui.Button):
         data = load_data()
         items = data["lists"].get(self.list_name, {}).get("items", [])
-        embeds = build_premium_cinema_embeds(self.list_name, items)
+        embed = build_light_cinema_embed(self.list_name, items)
         view = ListView(self.list_name, items, can_manage(interaction.user), self.list_names)
-        await interaction.response.edit_message(embeds=embeds, view=view)
+        await interaction.response.edit_message(embed=embed, view=view)
 
-# ─── Dynamic List View ────────────────────────────────────
+# ─── Dynamic List View (التنقل السريع) ────────────────────
 class ListView(discord.ui.View):
     def __init__(self, current_list_name: str, items: list, is_manager: bool, list_names: list[str]):
         super().__init__(timeout=None)
@@ -188,9 +185,9 @@ class ListView(discord.ui.View):
                 return
             items = lst.get("items", [])
             
-            embeds = build_premium_cinema_embeds(name, items)
+            embed = build_light_cinema_embed(name, items)
             view  = ListView(name, items, can_manage(interaction.user), self.list_names)
-            await interaction.response.edit_message(embeds=embeds, view=view)
+            await interaction.response.edit_message(embed=embed, view=view)
         return callback
 
 # ─── Specialized Panel Buttons ────────────────────────────
@@ -206,8 +203,7 @@ class ManageButton(discord.ui.Button):
             description="التحكم بمحتوى وتفاصيل القائمة الحالية بشكل مباشر ونظيف.",
             color=0x1a1a1a
         )
-        # تم تصحيح المعرّف هنا إلى embeds=
-        await interaction.response.edit_message(embeds=[embed], view=ManageDashboardView(self.list_name, self.list_names))
+        await interaction.response.edit_message(embed=embed, view=ManageDashboardView(self.list_name, self.list_names))
 
 class HomeButton(discord.ui.Button):
     def __init__(self):
@@ -239,9 +235,9 @@ class PanelView(discord.ui.View):
                 return
             items = lst.get("items", [])
             
-            embeds = build_premium_cinema_embeds(name, items)
+            embed = build_light_cinema_embed(name, items)
             view  = ListView(name, items, can_manage(interaction.user), self.list_names)
-            await interaction.response.edit_message(embeds=embeds, view=view)
+            await interaction.response.edit_message(embed=embed, view=view)
         return callback
 
 # ─── Return to Main Dashboard ─────────────────────────────
@@ -260,8 +256,7 @@ async def return_to_main_panel(interaction: discord.Interaction):
         color=0x1a1a1a
     )
     view = PanelView(list_names)
-    # تم تصحيح المعرّف هنا إلى embeds=
-    await interaction.response.edit_message(embeds=[embed], view=view)
+    await interaction.response.edit_message(embed=embed, view=view)
 
 # ─── Panel refresh ────────────────────────────────────────
 async def refresh_panel(guild: discord.Guild, channel: discord.TextChannel):
@@ -287,13 +282,11 @@ async def refresh_panel(guild: discord.Guild, channel: discord.TextChannel):
     if old_msg_id:
         try:
             old_msg = await channel.fetch_message(old_msg_id)
-            # تم تصحيح المعرّف هنا إلى embeds=
-            await old_msg.edit(embeds=[embed], view=view)
+            await old_msg.edit(embed=embed, view=view)
             return
         except discord.NotFound:
             pass
 
-    # هنا نرسل الـ embed الأول كبداية للوحة التحكم الأساسية
     msg = await channel.send(embed=embed, view=view)
     data.setdefault("panel_message", {})[guild_key] = msg.id
     save_data(data)
@@ -306,9 +299,8 @@ tree = bot.tree
 
 @bot.event
 async def on_ready():
-    print(f"✅ Logged in as {bot.user} ({bot.user.id})")
+    print(f"✅ Logged in as {bot.user}")
     await tree.sync()
-    print("✅ Slash commands synced.")
 
 # ══════════════════════════════════════════════════════════
 # Commands
@@ -338,7 +330,4 @@ async def cmd_list_create(interaction: discord.Interaction, name: str):
 
 # ─── Run ──────────────────────────────────────────────────
 TOKEN = os.environ.get("DISCORD_TOKEN")
-if not TOKEN:
-    raise RuntimeError("❌ DISCORD_TOKEN environment variable not set!")
-
 bot.run(TOKEN)
