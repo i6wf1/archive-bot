@@ -3,6 +3,8 @@ from discord.ext import commands
 from discord import app_commands
 import json
 import os
+import urllib.request
+import urllib.parse
 from pathlib import Path
 
 # ─── Config ───────────────────────────────────────────────
@@ -36,8 +38,36 @@ def get_poster(item) -> str:
 def get_desc(item) -> str:
     return item.get("desc", "") if isinstance(item, dict) else ""
 
-# ─── Ultra Light Cinema Embed (تصميم خفيف وسريع) ───────────
-def build_light_cinema_embed(list_name: str, items: list) -> discord.Embed:
+# ─── TMDB/IMDb Helper (محرك البحث التلقائي للأفلام) ───────────
+def fetch_movie_details(query: str) -> dict:
+    """البحث الفوري عن بيانات الفيلم والبوستر عبر قاعدة البيانات المفتوحة"""
+    try:
+        encoded_query = urllib.parse.quote(query)
+        # استخدام قاعدة البيانات المفتوحة للأفلام لجلب البوسترات والقصة تلقائياً
+        url = f"https://api.themoviedb.org/3/search/multi?api_key=a5549d08e403485bc2b5914ed135cf75&query={encoded_query}&language=ar"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=5) as response:
+            res_data = json.loads(response.read().decode('utf-8'))
+            results = res_data.get("results", [])
+            if results:
+                movie = results[0]
+                title = movie.get("title") or movie.get("name") or query
+                desc = movie.get("overview", "")
+                poster_path = movie.get("poster_path")
+                poster_url = f"https://image.tmdb.org/t/p/w500{poster_path}" if poster_path else ""
+                
+                # تقصير الوصف إذا كان طويلاً جداً لحفظ مساحة الـ Embed
+                if len(desc) > 120:
+                    desc = desc[:117] + "..."
+                    
+                return {"title": title, "desc": desc, "poster": poster_url}
+    except Exception:
+        pass
+    # في حال لم يجد الفيلم أو حدث خطأ في الاتصال، يعتمد النص المكتوب يدوياً
+    return {"title": query, "desc": "", "poster": ""}
+
+# ─── Dynamic Clean Cinema Embed ───────────────────────────
+def build_premium_cinema_embed(list_name: str, items: list) -> discord.Embed:
     embed = discord.Embed(
         title=f"Wonderland • {list_name.upper()}",
         color=0x1a1a1a
@@ -48,29 +78,36 @@ def build_light_cinema_embed(list_name: str, items: list) -> discord.Embed:
         return embed
 
     description_lines = []
-    # عرض الأفلام بشكل طولي مدمج وأنيق لتقليل الحجم وتسريع الاستجابة
     for i, item in enumerate(items):
         title = get_title(item)
         desc = get_desc(item)
         poster = get_poster(item)
         
-        # تنسيق السطر الأساسي للفيلم
+        # مظهر رسمي فخم للأفلام بروابط بوسترات مباشرة ومخفية ذكياً
         line = f"**{i+1:02d}. {title}**"
         if desc:
             line += f" — *{desc}*"
         if poster:
-            line += f"  `[ [البوستر]({poster}) ]`"
+            line += f"  `[ [شاهد البوستر]({poster}) ]`"
             
         description_lines.append(line)
 
     embed.description = "\n\n".join(description_lines)
+    
+    # الحل العبقري: إظهار بوستر الفيلم الأول كصورة ضخمة بالأسفل لإعطاء مظهر سينمائي فخم بدون ثقل
+    first_poster = get_poster(items[0])
+    if first_poster:
+        embed.set_image(url=first_poster)
+        
     return embed
 
-# ─── Modals ───────────────────────────────────────────────
-class AddItemModal(discord.ui.Modal, title="إضافة فيلم"):
-    item_title = discord.ui.TextInput(label="اسم الفيلم", required=True)
-    item_desc = discord.ui.TextInput(label="الوصف أو التقييم", style=discord.TextStyle.paragraph, required=False)
-    item_poster = discord.ui.TextInput(label="رابط صورة البوستر", placeholder="https://...", required=False)
+# ─── Modals (إدارة ذكية ومبسطة) ─────────────────────────────
+class AddItemModal(discord.ui.Modal, title="إضافة عمل ذكي"):
+    item_title = discord.ui.TextInput(
+        label="اسم الفيلم أو المسلسل (عربي أو إنجليزي)", 
+        placeholder="مثال: Interstellar أو inception", 
+        required=True
+    )
 
     def __init__(self, list_name: str, list_names: list[str]):
         super().__init__()
@@ -78,21 +115,34 @@ class AddItemModal(discord.ui.Modal, title="إضافة فيلم"):
         self.list_names = list_names
 
     async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        
+        # البحث التلقائي وجلب البيانات بلمح البصر
+        movie_details = fetch_movie_details(self.item_title.value)
+        
         data = load_data()
         if self.list_name in data["lists"]:
-            data["lists"][self.list_name]["items"].append({
-                "title": self.item_title.value,
-                "poster": self.item_poster.value,
-                "desc": self.item_desc.value
-            })
+            data["lists"][self.list_name]["items"].append(movie_details)
             save_data(data)
             
             items = data["lists"][self.list_name]["items"]
-            embed = build_light_cinema_embed(self.list_name, items)
+            embed = build_premium_cinema_embed(self.list_name, items)
             view = ListView(self.list_name, items, can_manage(interaction.user), self.list_names)
-            await interaction.response.edit_message(embed=embed, view=view)
+            
+            # تحديث الواجهة الرئيسية فوراً
+            panel_info = data.get("panel_message", {})
+            guild_key = str(interaction.guild.id)
+            msg_id = panel_info.get(guild_key)
+            if msg_id:
+                try:
+                    msg = await interaction.channel.fetch_message(msg_id)
+                    await msg.edit(embed=embed, view=view)
+                except discord.NotFound:
+                    pass
+                    
+            await interaction.followup.send(f"✅ تم تلقائياً جلب وإضافة: **{movie_details['title']}**", ephemeral=True)
         else:
-            await interaction.response.send_message("خطأ: القائمة غير موجودة.", ephemeral=True)
+            await interaction.followup.send("خطأ: القائمة غير موجودة.", ephemeral=True)
 
 class RemoveItemModal(discord.ui.Modal, title="حذف فيلم"):
     item_number = discord.ui.TextInput(label="رقم الفيلم في القائمة", placeholder="مثال: 1", required=True)
@@ -119,7 +169,7 @@ class RemoveItemModal(discord.ui.Modal, title="حذف فيلم"):
         items.pop(num - 1)
         save_data(data)
         
-        embed = build_light_cinema_embed(self.list_name, items)
+        embed = build_premium_cinema_embed(self.list_name, items)
         view = ListView(self.list_name, items, can_manage(interaction.user), self.list_names)
         await interaction.response.edit_message(embed=embed, view=view)
 
@@ -130,7 +180,7 @@ class ManageDashboardView(discord.ui.View):
         self.list_name = list_name
         self.list_names = list_names
 
-    @discord.ui.button(label="إضافة فيلم جديد", style=discord.ButtonStyle.success, row=0)
+    @discord.ui.button(label="إضافة فيلم تلقائي", style=discord.ButtonStyle.success, row=0)
     async def add_item_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(AddItemModal(self.list_name, self.list_names))
 
@@ -150,11 +200,11 @@ class ManageDashboardView(discord.ui.View):
     async def back_to_view(self, interaction: discord.Interaction, button: discord.ui.Button):
         data = load_data()
         items = data["lists"].get(self.list_name, {}).get("items", [])
-        embed = build_light_cinema_embed(self.list_name, items)
+        embed = build_premium_cinema_embed(self.list_name, items)
         view = ListView(self.list_name, items, can_manage(interaction.user), self.list_names)
         await interaction.response.edit_message(embed=embed, view=view)
 
-# ─── Dynamic List View (التنقل السريع) ────────────────────
+# ─── Dynamic List View (التنقل الدائم السريع دقة عالية) ───
 class ListView(discord.ui.View):
     def __init__(self, current_list_name: str, items: list, is_manager: bool, list_names: list[str]):
         super().__init__(timeout=None)
@@ -185,7 +235,7 @@ class ListView(discord.ui.View):
                 return
             items = lst.get("items", [])
             
-            embed = build_light_cinema_embed(name, items)
+            embed = build_premium_cinema_embed(name, items)
             view  = ListView(name, items, can_manage(interaction.user), self.list_names)
             await interaction.response.edit_message(embed=embed, view=view)
         return callback
@@ -235,7 +285,7 @@ class PanelView(discord.ui.View):
                 return
             items = lst.get("items", [])
             
-            embed = build_light_cinema_embed(name, items)
+            embed = build_premium_cinema_embed(name, items)
             view  = ListView(name, items, can_manage(interaction.user), self.list_names)
             await interaction.response.edit_message(embed=embed, view=view)
         return callback
