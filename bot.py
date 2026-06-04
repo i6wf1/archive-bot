@@ -315,7 +315,7 @@ class ItemEditorDashboard(discord.ui.View):
 class ItemDropdownSelector(discord.ui.Select):
     def __init__(self, list_name: str, list_names: list[str], options: list):
         super().__init__(
-            placeholder="🎯 اختر فيلماً أو مسلسلاً للتحكم به مباشرة...",
+            placeholder="✏️ تعديل محتويات اللستة...",
             min_values=1,
             max_values=1,
             options=options,
@@ -342,6 +342,34 @@ class ItemDropdownSelector(discord.ui.Select):
             color=0xd3beab
         )
         await interaction.response.edit_message(embeds=[embed], view=ItemEditorDashboard(self.list_name, self.list_names, index + 1, item))
+
+# ─── Customize List View (حذف + تعديل الاسم) ─────────────
+class CustomizeListView(discord.ui.View):
+    def __init__(self, list_name: str, list_names: list[str]):
+        super().__init__(timeout=120)
+        self.list_name = list_name
+        self.list_names = list_names
+
+    @discord.ui.button(label="📝 تعديل اسم اللستة", style=discord.ButtonStyle.blurple, row=0)
+    async def rename_list_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(RenameListModal(self.list_name))
+
+    @discord.ui.button(label="❌ حذف اللستة بالكامل", style=discord.ButtonStyle.danger, row=0)
+    async def delete_list_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        data = load_data()
+        if self.list_name in data["lists"]:
+            del data["lists"][self.list_name]
+            save_data(data)
+        await return_to_main_panel(interaction)
+
+    @discord.ui.button(emoji="⬅️", label="عودة للوحة التحكم", style=discord.ButtonStyle.secondary, row=1)
+    async def back_to_mgr(self, interaction: discord.Interaction, button: discord.ui.Button):
+        embed = discord.Embed(
+            title=f"إدارة — {self.list_name}",
+            description="التحكم الكامل والذكي بمحتوى وتعديل القائمة، ترتيب الأعمال، تغيير اسم اللستة أو حذفها.",
+            color=0xd3beab
+        )
+        await interaction.response.edit_message(embeds=[embed], view=ManageDashboardView(self.list_name, self.list_names))
 
 # ─── Unified Management Dashboard View ────────────────────
 class ManageDashboardView(discord.ui.View):
@@ -373,21 +401,18 @@ class ManageDashboardView(discord.ui.View):
             )
             self.add_item(disabled_select)
 
-    @discord.ui.button(label="➕ إضافة عمل جديد", style=discord.ButtonStyle.primary, row=0)
+    @discord.ui.button(label="➕ إضافة", style=discord.ButtonStyle.primary, row=0)
     async def add_item_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(AddItemModal(self.list_name, self.list_names))
 
-    @discord.ui.button(label="📝 تعديل اسم اللستة", style=discord.ButtonStyle.secondary, row=0)
-    async def rename_list_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(RenameListModal(self.list_name))
-
-    @discord.ui.button(label="❌ حذف اللستة بالكامل", style=discord.ButtonStyle.danger, row=0)
-    async def delete_list_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        data = load_data()
-        if self.list_name in data["lists"]:
-            del data["lists"][self.list_name]
-            save_data(data)
-        await return_to_main_panel(interaction)
+    @discord.ui.button(label="🎨 تخصيص اللستة", style=discord.ButtonStyle.blurple, row=0)
+    async def customize_list_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        embed = discord.Embed(
+            title=f"تخصيص اللستة — {self.list_name}",
+            description="اختر الإجراء المطلوب:\n\n🗑️ **حذف اللستة بالكامل** — يحذف القائمة ومحتوياتها نهائياً.\n📝 **تعديل اسم اللستة** — تغيير اسم القائمة مع الحفاظ على محتوياتها.",
+            color=0x5865F2
+        )
+        await interaction.response.edit_message(embeds=[embed], view=CustomizeListView(self.list_name, self.list_names))
 
     @discord.ui.button(emoji="🏠", label="العودة للستة", style=discord.ButtonStyle.success, row=1)
     async def back_to_view(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -495,6 +520,27 @@ class PanelView(discord.ui.View):
             )
             btn.callback = self.make_callback(name)
             self.add_item(btn)
+
+        restart_btn = discord.ui.Button(
+            emoji="🔄",
+            style=discord.ButtonStyle.secondary,
+            custom_id="panel_restart_btn",
+            row=1
+        )
+        restart_btn.callback = self.restart_callback
+        self.add_item(restart_btn)
+
+    async def restart_callback(self, interaction: discord.Interaction):
+        if not can_manage(interaction.user):
+            await interaction.response.send_message("⚠️ هذا الزر مخصص للمشرفين فقط!", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        try:
+            await refresh_panel(interaction, interaction.channel)
+        except Exception as e:
+            print(f"🚨 خطأ أثناء إعادة تشغيل اللوحة: {e}")
+            traceback.print_exc()
+            await interaction.followup.send("❌ حدث خطأ أثناء إعادة التحميل.", ephemeral=True)
 
     def make_callback(self, name: str):
         async def callback(interaction: discord.Interaction):
