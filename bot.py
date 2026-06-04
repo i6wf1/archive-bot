@@ -9,7 +9,7 @@ from pathlib import Path
 
 # ─── Config ───────────────────────────────────────────────
 DATA_FILE = "data/lists.json"
-MANAGER_ROLE_NAME = "Archive Manager"
+MANAGER_ROLE_NAME = "Archive Manager"  # رتبة الإدارة والتحكم
 TMDB_API_KEY = "0bce26c0165650e02aec5943e60395ad"
 
 # ─── Data helpers ─────────────────────────────────────────
@@ -39,16 +39,17 @@ def get_poster(item) -> str:
 def get_desc(item) -> str:
     return item.get("desc", "") if isinstance(item, dict) else ""
 
+def get_ratings(item) -> dict:
+    """جلب تقييمات الأعضاء المخزنة للفيلم"""
+    return item.get("ratings", {}) if isinstance(item, dict) else {}
+
 def get_list_emoji(list_data: dict) -> str:
-    """جلب الإيموجي المخصص للستة أو وضع المجلد الافتراضي لو لم يتوفر"""
     return list_data.get("emoji", "📁")
 
-# ─── Official Primary Poster Fetcher ──────────────────────
+# ─── TMDB Official Primary Poster Fetcher ─────────────────
 def fetch_official_theatrical_details(query: str) -> dict:
-    """جلب الاسم الأصلي والبوستر الرسمي والأساسي للسينما من قاعدة البيانات"""
     try:
         encoded_query = urllib.parse.quote(query)
-        # استدعاء البحث باللغة الأصلية لضمان البوستر والاسم المسجل بالسينما عالمياً
         url = f"https://api.themoviedb.org/3/search/multi?api_key={TMDB_API_KEY}&query={encoded_query}&language=en-US"
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
         with urllib.request.urlopen(req, timeout=5) as response:
@@ -58,16 +59,14 @@ def fetch_official_theatrical_details(query: str) -> dict:
                 movie = results[0]
                 title = movie.get("original_title") or movie.get("original_name") or movie.get("title") or query
                 poster_path = movie.get("poster_path")
-                # استخدام الرابط المباشر للبوستر الأساسي المعتمد للفيلم
                 poster_url = f"https://image.tmdb.org/t/p/w500{poster_path}" if poster_path else ""
-                return {"title": title, "poster": poster_url}
+                return {"title": title, "poster": poster_url, "ratings": {}}
     except Exception as e:
         print(f"Error fetching from TMDB: {e}")
-    return {"title": query, "poster": ""}
+    return {"title": query, "poster": "", "ratings": {}}
 
 # ─── Equalized Miniature Embeds Builder ───────────────────
 def build_separate_embeds(list_name: str, items: list) -> list[discord.Embed]:
-    """توليد قائمة إمبيدات منفصلة وموحدة الحجم هندسياً لراحة العين"""
     if not items:
         embed = discord.Embed(
             title=f"Wonderland • {list_name.upper()}", 
@@ -77,23 +76,27 @@ def build_separate_embeds(list_name: str, items: list) -> list[discord.Embed]:
         return [embed]
     
     embeds = []
-    # سطر شفاف ثابت الطول لإجبار ديسكورد على توحيد عرض وارتفاع المربع لجميع الأفلام
     invisible_filler = "\n\u200b " + " " * 45 + " \u200b"
     
     for i, item in enumerate(items[:10]):
         title = get_title(item)
         desc = get_desc(item)
         poster = get_poster(item)
+        ratings = get_ratings(item)
         
         embed = discord.Embed(color=0x1a1a1a)
+        embed.title = f"{i+1:02d}. {title}"
         
-        if i == 0:
-            embed.title = f"{list_name.upper()}  •  {i+1:02d}. {title}"
-        else:
-            embed.title = f"{i+1:02d}. {title}"
-            
-        # دمج الوصف اليدوي مع السطر الشفاف لتوحيد المقاسات والمستوى
-        embed.description = f"{desc if desc else 'لا يوجد وصف.'}{invisible_filler}"
+        # بناء نص الوصف الأساسي
+        content = f"{desc if desc else 'لا يوجد وصف.'}"
+        
+        # إضافة تقييمات الأعضاء المشتركة أسفل الوصف بشكل منظم جداً لو كانت موجودة
+        if ratings:
+            content += "\n\n**👥 تقييمات الأعضاء:**"
+            for user_name, user_rating in ratings.items():
+                content += f"\n▫️ {user_name}: `{user_rating}`"
+                
+        embed.description = f"{content}{invisible_filler}"
             
         if poster:
             embed.set_thumbnail(url=poster)
@@ -102,7 +105,55 @@ def build_separate_embeds(list_name: str, items: list) -> list[discord.Embed]:
         
     return embeds
 
-# ─── Modals (إدارة المحتوى) ───────────────────────────────
+# ─── Modals (إدارة وتفاعل) ────────────────────────────────
+class RateItemModal(discord.ui.Modal, title="تقييم فيلم في اللستة"):
+    item_number = discord.ui.TextInput(label="رقم الفيلم المراد تقييمه", placeholder="مثال: 1", required=True)
+    user_rating = discord.ui.TextInput(label="تقييمك ورأيك بالعمل", placeholder="مثال: 9/10 أو خيالي جداً أنصح به", required=True)
+
+    def __init__(self, list_name: str, list_names: list[str]):
+        super().__init__()
+        self.list_name = list_name
+        self.list_names = list_names
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        try:
+            num = int(self.item_number.value)
+        except ValueError:
+            await interaction.followup.send("❌ يرجى إدخال رقم فيلم صحيح.", ephemeral=True)
+            return
+
+        data = load_data()
+        items = data["lists"].get(self.list_name, {}).get("items", [])
+        
+        if num < 1 or num > len(items):
+            await interaction.followup.send("❌ رقم الفيلم غير موجود في القائمة الحالية.", ephemeral=True)
+            return
+
+        # حفظ تقييم المستخدم باسم الحساب حقه ليكون العرض رسمي وواضح
+        user_key = interaction.user.display_name
+        if "ratings" not in items[num - 1] or not isinstance(items[num - 1]["ratings"], dict):
+            items[num - 1]["ratings"] = {}
+            
+        items[num - 1]["ratings"][user_key] = self.user_rating.value
+        save_data(data)
+        
+        # تحديث الواجهة فوراً ليعلم الجميع بالتقييم الجديد
+        embeds = build_separate_embeds(self.list_name, items)
+        view = ListView(self.list_name, items, can_manage(interaction.user), self.list_names, data["lists"])
+        
+        panel_info = data.get("panel_message", {})
+        guild_key = str(interaction.guild.id)
+        msg_id = panel_info.get(guild_key)
+        if msg_id:
+            try:
+                msg = await interaction.channel.fetch_message(msg_id)
+                await msg.edit(embeds=embeds, view=view)
+            except discord.NotFound:
+                pass
+                
+        await interaction.followup.send("⭐ تم تسجيل مراجعتك وتقييمك للفيلم بنجاح الحين!", ephemeral=True)
+
 class AddItemModal(discord.ui.Modal, title="إضافة عمل للستة"):
     item_title = discord.ui.TextInput(label="اسم الفيلم أو المسلسل (للبحث)", placeholder="مثال: Iron Man", required=True)
     item_desc = discord.ui.TextInput(label="الوصف أو تقييمك الخاص", style=discord.TextStyle.paragraph, required=False, placeholder="اكتب مراجعتك الشخصية هنا...")
@@ -179,21 +230,30 @@ class ManageDashboardView(discord.ui.View):
 
     @discord.ui.button(label="إضافة فيلم جديد", style=discord.ButtonStyle.success, row=0)
     async def add_item_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not can_manage(interaction.user):
+            await interaction.response.send_message("⚠️ عذراً، هذا الزر مخصص للإدارة والمشرفين فقط!", ephemeral=True)
+            return
         await interaction.response.send_modal(AddItemModal(self.list_name, self.list_names))
 
     @discord.ui.button(label="حذف فيلم بالرقم", style=discord.ButtonStyle.secondary, row=0)
     async def remove_item_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not can_manage(interaction.user):
+            await interaction.response.send_message("⚠️ عذراً، هذا الزر مخصص للإدارة والمشرفين فقط!", ephemeral=True)
+            return
         await interaction.response.send_modal(RemoveItemModal(self.list_name, self.list_names))
 
     @discord.ui.button(label="حذف اللستة كاملة", style=discord.ButtonStyle.danger, row=0)
     async def delete_list_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not can_manage(interaction.user):
+            await interaction.response.send_message("⚠️ عذراً، هذا الزر مخصص للإدارة والمشرفين فقط!", ephemeral=True)
+            return
         data = load_data()
         if self.list_name in data["lists"]:
             del data["lists"][self.list_name]
             save_data(data)
         await return_to_main_panel(interaction)
 
-    @discord.ui.button(label="← عودة للتصفح", style=discord.ButtonStyle.primary, row=1)
+    @discord.ui.button(emoji="🏠", style=discord.ButtonStyle.primary, row=1)
     async def back_to_view(self, interaction: discord.Interaction, button: discord.ui.Button):
         data = load_data()
         items = data["lists"].get(self.list_name, {}).get("items", [])
@@ -201,7 +261,7 @@ class ManageDashboardView(discord.ui.View):
         view = ListView(self.list_name, items, can_manage(interaction.user), self.list_names, data["lists"])
         await interaction.response.edit_message(embeds=embeds, view=view)
 
-# ─── Dynamic List View (التنقل السريع بالإيموجيات المخصصة) ───
+# ─── Dynamic List View (التنقل التصفحي المطور) ───────────────
 class ListView(discord.ui.View):
     def __init__(self, current_list_name: str, items: list, is_manager: bool, list_names: list[str], all_lists_data: dict):
         super().__init__(timeout=None)
@@ -209,9 +269,12 @@ class ListView(discord.ui.View):
         self.list_names = list_names
         self.all_lists_data = all_lists_data
         
-        if is_manager:
-            self.add_item(ManageButton(current_list_name, list_names))
+        # الأزرار الرئيسية المختصرة بإيموجيات صافية ومميزة ⚙️ و 🏠
+        self.add_item(ManageButton(current_list_name, list_names))
         self.add_item(HomeButton())
+        
+        # زر التقييم التفاعلي لجميع أعضاء السيرفر
+        self.add_item(RateButton(current_list_name, list_names))
 
         for name in list_names:
             style = discord.ButtonStyle.success if name == current_list_name else discord.ButtonStyle.secondary
@@ -240,14 +303,29 @@ class ListView(discord.ui.View):
             await interaction.response.edit_message(embeds=embeds, view=view)
         return callback
 
-# ─── Specialized Panel Buttons ────────────────────────────
-class ManageButton(discord.ui.Button):
+# ─── Specialized Action Buttons ───────────────────────────
+class RateButton(discord.ui.Button):
+    """زر التقييم التفاعلي المشترك والمتاح لجميع المستخدمين بالسيرفر"""
     def __init__(self, list_name: str, list_names: list[str]):
-        super().__init__(label="إدارة القائمة", style=discord.ButtonStyle.danger, row=0)
+        super().__init__(label="⭐ تقييم العمل", style=discord.ButtonStyle.primary, row=0)
         self.list_name = list_name
         self.list_names = list_names
 
     async def callback(self, interaction: discord.Interaction):
+        await interaction.response.send_modal(RateItemModal(self.list_name, self.list_names))
+
+class ManageButton(discord.ui.Button):
+    """زر الترس ⚙️ البديل لكلمة إدارة القائمة"""
+    def __init__(self, list_name: str, list_names: list[str]):
+        super().__init__(emoji="⚙️", style=discord.ButtonStyle.danger, row=0)
+        self.list_name = list_name
+        self.list_names = list_names
+
+    async def callback(self, interaction: discord.Interaction):
+        if not can_manage(interaction.user):
+            await interaction.response.send_message("⚠️ عذراً، لوحة الإدارة مخصصة للمشرفين فقط!", ephemeral=True)
+            return
+
         embed = discord.Embed(
             title=f"إدارة — {self.list_name}",
             description="التحكم بمحتوى وتفاصيل القائمة الحالية بشكل مباشر ونظيف.",
@@ -256,8 +334,9 @@ class ManageButton(discord.ui.Button):
         await interaction.response.edit_message(embeds=[embed], view=ManageDashboardView(self.list_name, self.list_names))
 
 class HomeButton(discord.ui.Button):
+    """زر البيت 🏠 البديل لكلمة الرئيسية"""
     def __init__(self):
-        super().__init__(label="الرئيسية", style=discord.ButtonStyle.primary, row=0)
+        super().__init__(emoji="🏠", style=discord.ButtonStyle.success, row=0)
 
     async def callback(self, interaction: discord.Interaction):
         await return_to_main_panel(interaction)
@@ -359,7 +438,7 @@ async def on_ready():
 @tree.command(name="panel", description="Post/refresh the main dashboard.")
 async def cmd_panel(interaction: discord.Interaction):
     if not can_manage(interaction.user):
-        await interaction.response.send_message("خطأ في الصلاحية.", ephemeral=True)
+        await interaction.response.send_message("⚠️ خطأ: هذا الأمر مخصص للإدارة فقط.", ephemeral=True)
         return
     await interaction.response.defer(ephemeral=True)
     await refresh_panel(interaction.guild, interaction.channel)
@@ -369,7 +448,7 @@ async def cmd_panel(interaction: discord.Interaction):
 @app_commands.describe(name="Category name", emoji="Custom emoji for this category (Optional)")
 async def cmd_list_create(interaction: discord.Interaction, name: str, emoji: str = None):
     if not can_manage(interaction.user):
-        await interaction.response.send_message("خطأ في الصلاحية.", ephemeral=True)
+        await interaction.response.send_message("⚠️ خطأ: ليس لديك صلاحية إنشاء قوائم جديدة.", ephemeral=True)
         return
     
     data = load_data()
@@ -377,7 +456,6 @@ async def cmd_list_create(interaction: discord.Interaction, name: str, emoji: st
         await interaction.response.send_message("القائمة موجودة مسبقاً.", ephemeral=True)
         return
     
-    # حفظ الإيموجي الاختياري أو الاعتماد على المجلد الافتراضي
     assigned_emoji = emoji if emoji else "📁"
     data["lists"][name] = {"description": "", "emoji": assigned_emoji, "items": []}
     save_data(data)
