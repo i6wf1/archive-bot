@@ -36,46 +36,41 @@ def get_poster(item) -> str:
 def get_desc(item) -> str:
     return item.get("desc", "") if isinstance(item, dict) else ""
 
-# ─── Netflix Style Embed (عرض كأنه نتفليكس) ───────────────────
-def build_netflix_embed(list_name: str, items: list) -> discord.Embed:
-    embed = discord.Embed(
-        title=f"🎬  {list_name}",
-        color=0xE74C3C
-    )
+# ─── Clean Cinema Embed ───────────────────────────────────
+# دالة تقوم ببناء مصفوفة من الـ Embeds لعرض الأفلام بشكل منفصل وكبير جداً داخل نفس الرسالة
+def build_clean_cinema_embeds(list_name: str, items: list) -> list[discord.Embed]:
     if not items:
-        embed.description = "*هذه القائمة فارغة حالياً.*"
-    else:
-        description_lines = []
-        for i, item in enumerate(items):
-            title = get_title(item)
-            desc = get_desc(item)
-            poster = get_poster(item)
-            
-            # تنسيق مظهر الفيلم: الرقم والاسم بخط عريض
-            item_text = f"**{i+1:02d}. {title}**"
-            if desc:
-                item_text += f"\n> {desc}"
-            if poster:
-                item_text += f"\n🖼️ [شاهد البوستر]({poster})"
-            
-            description_lines.append(item_text)
+        embed = discord.Embed(title=list_name, description="القائمة فارغة حالياً.", color=0x111111)
+        return [embed]
+    
+    embeds = []
+    for i, item in enumerate(items):
+        title = get_title(item)
+        desc = get_desc(item)
+        poster = get_poster(item)
         
-        # دمج العناصر بمسافات لتبدو منسقة ومتسلسلة
-        embed.description = "\n\n▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬▬\n\n".join(description_lines)
+        # الـ Embed الأول يحتوي على اسم القائمة كعنوان جانبي وبداية العرض الأول
+        if i == 0:
+            embed = discord.Embed(title=f"{list_name} — {i+1:02d}. {title}", color=0x111111)
+        else:
+            embed = discord.Embed(title=f"{i+1:02d}. {title}", color=0x111111)
+            
+        if desc:
+            embed.description = desc
+            
+        if poster:
+            # تم جعل البوستر يظهر كصورة كاملة الحجم وعريضة أسفل الاسم والوصف مباشرة لمظهر سينمائي ضخم
+            embed.set_image(url=poster)
+            
+        embeds.append(embed)
         
-        # وضع بوستر أول فيلم كصورة مصغرة جانبية كطابع مميز للقائمة
-        first_poster = get_poster(items[0])
-        if first_poster:
-            embed.set_thumbnail(url=first_poster)
+    return embeds
 
-    embed.set_footer(text=f"إجمالي العروض: {len(items)}  •  Wonderland Lists")
-    return embed
-
-# ─── Modals (النوافذ المنبثقة للتحكم التلقائي) ───────────────────
-class AddItemModal(discord.ui.Modal, title="إضافة عنصر جديد"):
-    item_title = discord.ui.TextInput(label="اسم الفيلم / العرض", placeholder="مثال: Iron Man", required=True)
-    item_desc = discord.ui.TextInput(label="الوصف (اختياري)", style=discord.TextStyle.paragraph, required=False)
-    item_poster = discord.ui.TextInput(label="رابط صورة البوستر (اختياري)", placeholder="https://...", required=False)
+# ─── Modals (إدارة نظيفة) ───────────────────────────────────
+class AddItemModal(discord.ui.Modal, title="إضافة"):
+    item_title = discord.ui.TextInput(label="الاسم", placeholder="اسم الفيلم أو العرض", required=True)
+    item_desc = discord.ui.TextInput(label="الوصف", style=discord.TextStyle.paragraph, required=False)
+    item_poster = discord.ui.TextInput(label="رابط البوستر", placeholder="https://...", required=False)
 
     def __init__(self, list_name: str):
         super().__init__()
@@ -91,16 +86,16 @@ class AddItemModal(discord.ui.Modal, title="إضافة عنصر جديد"):
             })
             save_data(data)
             
-            # إعادة تحديث العرض فوراً بعد الإضافة
             items = data["lists"][self.list_name]["items"]
-            embed = build_netflix_embed(self.list_name, items)
+            embeds = build_clean_cinema_embeds(self.list_name, items)
             view = ListView(self.list_name, items, can_manage(interaction.user))
-            await interaction.response.edit_message(embed=embed, view=view)
+            # تم تحديد الـ embeds كمصفوفة لتحديث الواجهة الكبيرة بالكامل
+            await interaction.response.edit_message(embeds=embeds, view=view)
         else:
-            await interaction.response.send_message("❌ حدث خطأ، القائمة لم تعد موجودة.", ephemeral=True)
+            await interaction.response.send_message("خطأ: القائمة غير موجودة.", ephemeral=True)
 
-class RemoveItemModal(discord.ui.Modal, title="حذف عنصر من القائمة"):
-    item_number = discord.ui.TextInput(label="رقم العنصر المراد حذفه", placeholder="مثال: 1", required=True)
+class RemoveItemModal(discord.ui.Modal, title="حذف"):
+    item_number = discord.ui.TextInput(label="رقم العنصر للحذف", placeholder="مثال: 1", required=True)
 
     def __init__(self, list_name: str):
         super().__init__()
@@ -110,38 +105,38 @@ class RemoveItemModal(discord.ui.Modal, title="حذف عنصر من القائم
         try:
             num = int(self.item_number.value)
         except ValueError:
-            await interaction.response.send_message("❌ يرجى إدخال رقم صحيح.", ephemeral=True)
+            await interaction.response.send_message("يرجى إدخال رقم صحيح.", ephemeral=True)
             return
 
         data = load_data()
         items = data["lists"].get(self.list_name, {}).get("items", [])
         
         if num < 1 or num > len(items):
-            await interaction.response.send_message(f"❌ رقم غير صحيح. القائمة تحتوي على {len(items)} عناصر فقط.", ephemeral=True)
+            await interaction.response.send_message("رقم غير صحيح.", ephemeral=True)
             return
 
         items.pop(num - 1)
         save_data(data)
         
-        embed = build_netflix_embed(self.list_name, items)
+        embeds = build_clean_cinema_embeds(self.list_name, items)
         view = ListView(self.list_name, items, can_manage(interaction.user))
-        await interaction.response.edit_message(embed=embed, view=view)
+        await interaction.response.edit_message(embeds=embeds, view=view)
 
-# ─── Manage Dashboard View (لوحة التحكم الداخلية للستة) ───────────
+# ─── Manage View ──────────────────────────────────────────
 class ManageDashboardView(discord.ui.View):
     def __init__(self, list_name: str):
         super().__init__(timeout=60)
         self.list_name = list_name
 
-    @discord.ui.button(label="➕ إضافة فيلم", style=discord.ButtonStyle.success, row=0)
+    @discord.ui.button(label="إضافة فيلم جديد", style=discord.ButtonStyle.success, row=0)
     async def add_item_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(AddItemModal(self.list_name))
 
-    @discord.ui.button(label="🗑️ حذف فيلم محدد", style=discord.ButtonStyle.secondary, row=0)
+    @discord.ui.button(label="حذف فيلم بالرقم", style=discord.ButtonStyle.secondary, row=0)
     async def remove_item_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(RemoveItemModal(self.list_name))
 
-    @discord.ui.button(label="❌ حذف هذه اللستة بالكامل", style=discord.ButtonStyle.danger, row=1)
+    @discord.ui.button(label="حذف القائمة نهائياً", style=discord.ButtonStyle.danger, row=1)
     async def delete_list_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         data = load_data()
         if self.list_name in data["lists"]:
@@ -149,44 +144,42 @@ class ManageDashboardView(discord.ui.View):
             save_data(data)
         await return_to_main_panel(interaction)
 
-    @discord.ui.button(label="← عودة للمشاهدة", style=discord.ButtonStyle.primary, row=1)
+    @discord.ui.button(label="العودة للتصفح", style=discord.ButtonStyle.primary, row=1)
     async def back_to_view(self, interaction: discord.Interaction, button: discord.ui.Button):
         data = load_data()
         items = data["lists"].get(self.list_name, {}).get("items", [])
-        embed = build_netflix_embed(self.list_name, items)
+        embeds = build_clean_cinema_embeds(self.list_name, items)
         view = ListView(self.list_name, items, can_manage(interaction.user))
-        await interaction.response.edit_message(embed=embed, view=view)
+        await interaction.response.edit_message(embeds=embeds, view=view)
 
-# ─── List Content View (واجهة عرض الأفلام) ───────────────────
+# ─── List View ────────────────────────────────────────────
 class ListView(discord.ui.View):
     def __init__(self, list_name: str, items: list, is_manager: bool):
         super().__init__(timeout=180)
         self.list_name = list_name
         self.items = items
         
-        # إخفاء زر الإدارة إذا لم يكن العضو مسؤولاً
         if not is_manager:
             self.remove_item(self.manage_btn)
 
-    @discord.ui.button(label="⚙️ إدارة القائمة", style=discord.ButtonStyle.secondary, row=0)
+    @discord.ui.button(label="إدارة القائمة", style=discord.ButtonStyle.secondary, row=0)
     async def manage_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         embed = discord.Embed(
-            title=f"⚙️ لوحة التحكم — {self.list_name}",
-            description="يمكنك إضافة أو حذف محتويات القائمة مباشرة من الأزرار أدناه دون أية أوامر.",
-            color=0x2F3136
+            title=f"إدارة — {self.list_name}",
+            description="التحكم الكامل بمحتويات القائمة الحالية من خلال الأزرار أدناه.",
+            color=0x111111
         )
         await interaction.response.edit_message(embed=embed, view=ManageDashboardView(self.list_name))
 
-    @discord.ui.button(label="🏠 العودة للرئيسية", style=discord.ButtonStyle.primary, row=0)
+    @discord.ui.button(label="الرئيسية", style=discord.ButtonStyle.primary, row=0)
     async def go_home(self, interaction: discord.Interaction, button: discord.ui.Button):
         await return_to_main_panel(interaction)
 
-# ─── Main Panel View (الواجهة الرئيسية النظيفة) ───────────────────
+# ─── Panel View ───────────────────────────────────────────
 class PanelView(discord.ui.View):
     def __init__(self, list_names: list[str]):
         super().__init__(timeout=None)
         for name in list_names:
-            # التعديل: تم إزالة الإيموجي من اسم الأزرار لتصبح نظيفة تماماً
             btn = discord.ui.Button(
                 label=name,
                 custom_id=f"archive_list_{name}",
@@ -200,35 +193,31 @@ class PanelView(discord.ui.View):
             data  = load_data()
             lst   = data["lists"].get(name)
             if not lst:
-                await interaction.response.send_message(f"❌ القائمة **{name}** غير موجودة.", ephemeral=True)
+                await interaction.response.send_message("القائمة غير موجودة.", ephemeral=True)
                 return
             items = lst.get("items", [])
             
-            # العرض بأسلوب نتفليكس المباشر والمرتب
-            embed = build_netflix_embed(name, items)
+            embeds = build_clean_cinema_embeds(name, items)
             view  = ListView(name, items, can_manage(interaction.user))
-            await interaction.response.edit_message(embed=embed, view=view)
+            await interaction.response.edit_message(embeds=embeds, view=view)
         return callback
 
-# ─── Return to Main Dashboard Screen ───────────────────────────
+# ─── Return to Main Dashboard ─────────────────────────────
 async def return_to_main_panel(interaction: discord.Interaction):
     data       = load_data()
     list_names = list(data["lists"].keys())
 
-    # عرض اللستات بطريقة ضخمة، واضحة ومقسمة
+    # التعديل: إزالة كل النصوص والشروحات الفرعية والإيموجيات من الواجهة الرئيسية
     if list_names:
-        lines = ""
-        for k, v in data["lists"].items():
-            lines += f"🔴  **{k.upper()}**\n┗ يحتوي على `{len(v.get('items', []))}` عرض حالياً\n\n"
+        lines = "\n".join(f"**{k.upper()}** — `{len(v.get('items', []))}`" for k, v in data["lists"].items())
     else:
-        lines = "*لا توجد قوائم متوفرة حالياً.*"
+        lines = "لا توجد قوائم متوفرة."
 
     embed = discord.Embed(
-        title="✨ Wonderland Lists",
+        title="Wonderland Lists",
         description=lines,
         color=0x111111
     )
-    embed.set_footer(text="اختر التصنيف المفضل لديك من الأسفل لبدء العرض.")
     view = PanelView(list_names)
     await interaction.response.edit_message(embed=embed, view=view)
 
@@ -238,18 +227,15 @@ async def refresh_panel(guild: discord.Guild, channel: discord.TextChannel):
     list_names = list(data["lists"].keys())
 
     if list_names:
-        lines = ""
-        for k, v in data["lists"].items():
-            lines += f"🔴  **{k.upper()}**\n┗ يحتوي على `{len(v.get('items', []))}` عرض حالياً\n\n"
+        lines = "\n".join(f"**{k.upper()}** — `{len(v.get('items', []))}`" for k, v in data["lists"].items())
     else:
-        lines = "*لا توجد قوائم متوفرة حالياً. يمكنك إنشاؤها عبر أمر /list_create.*"
+        lines = "لا توجد قوائم متوفرة."
 
     embed = discord.Embed(
-        title="✨ Wonderland Lists",
+        title="Wonderland Lists",
         description=lines,
         color=0x111111
     )
-    embed.set_footer(text="اختر التصنيف المفضل لديك من الأسفل لبدء العرض.")
 
     panel_info = data.get("panel_message", {})
     guild_key  = str(guild.id)
@@ -281,30 +267,30 @@ async def on_ready():
     print("✅ Slash commands synced.")
 
 # ══════════════════════════════════════════════════════════
-#  الأمر الوحيد المتبقي لإنشاء اللوحة أو إضافة تصنيف رئيسي جديد
+# Commands
 # ══════════════════════════════════════════════════════════
-@tree.command(name="panel", description="Post/refresh the main Wonderland Lists dashboard.")
+@tree.command(name="panel", description="Post/refresh the main dashboard.")
 async def cmd_panel(interaction: discord.Interaction):
     if not can_manage(interaction.user):
-        await interaction.response.send_message("❌ لا تملك الصلاحية.", ephemeral=True)
+        await interaction.response.send_message("خطأ في الصلاحية.", ephemeral=True)
         return
     await interaction.response.defer(ephemeral=True)
     await refresh_panel(interaction.guild, interaction.channel)
-    await interaction.followup.send("✅ تم تحديث واجهة Wonderland Lists!", ephemeral=True)
+    await interaction.followup.send("تم تحديث الواجهة.", ephemeral=True)
 
-@tree.command(name="list_create", description="Create a new category list.")
+@tree.command(name="list_create", description="Create a new category.")
 @app_commands.describe(name="Category name")
 async def cmd_list_create(interaction: discord.Interaction, name: str):
     if not can_manage(interaction.user):
-        await interaction.response.send_message("❌ لا تملك الصلاحية.", ephemeral=True)
+        await interaction.response.send_message("خطأ في الصلاحية.", ephemeral=True)
         return
     data = load_data()
     if name in data["lists"]:
-        await interaction.response.send_message(f"❌ القائمة موجودة مسبقاً.", ephemeral=True)
+        await interaction.response.send_message("القائمة موجودة مسبقاً.", ephemeral=True)
         return
     data["lists"][name] = {"description": "", "items": []}
     save_data(data)
-    await interaction.response.send_message(f"✅ تم إنشاء القائمة المخصصة **{name}**! يرجى تحديث الـ panel.", ephemeral=True)
+    await interaction.response.send_message(f"تم إنشاء القائمة {name}.", ephemeral=True)
 
 # ─── Run ──────────────────────────────────────────────────
 TOKEN = os.environ.get("DISCORD_TOKEN")
