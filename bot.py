@@ -10,6 +10,7 @@ from pathlib import Path
 # ─── Config ───────────────────────────────────────────────
 DATA_FILE = "data/lists.json"
 MANAGER_ROLE_NAME = "Archive Manager"
+TMDB_API_KEY = "0bce26c0165650e02aec5943e60395ad"  # المفتاح الخاص بك تم تفعيله بنجاح ✅
 
 # ─── Data helpers ─────────────────────────────────────────
 def load_data() -> dict:
@@ -38,13 +39,12 @@ def get_poster(item) -> str:
 def get_desc(item) -> str:
     return item.get("desc", "") if isinstance(item, dict) else ""
 
-# ─── TMDB/IMDb Helper (محرك البحث التلقائي للأفلام) ───────────
+# ─── TMDB Intelligent Search Engine ───────────────────────
 def fetch_movie_details(query: str) -> dict:
-    """البحث الفوري عن بيانات الفيلم والبوستر عبر قاعدة البيانات المفتوحة"""
+    """البحث الفوري الذكي عن بيانات العمل عبر مفتاحك الخاص وجلب الترجمة والبوستر"""
     try:
         encoded_query = urllib.parse.quote(query)
-        # استخدام قاعدة البيانات المفتوحة للأفلام لجلب البوسترات والقصة تلقائياً
-        url = f"https://api.themoviedb.org/3/search/multi?api_key=a5549d08e403485bc2b5914ed135cf75&query={encoded_query}&language=ar"
+        url = f"https://api.themoviedb.org/3/search/multi?api_key={TMDB_API_KEY}&query={encoded_query}&language=ar"
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
         with urllib.request.urlopen(req, timeout=5) as response:
             res_data = json.loads(response.read().decode('utf-8'))
@@ -52,21 +52,22 @@ def fetch_movie_details(query: str) -> dict:
             if results:
                 movie = results[0]
                 title = movie.get("title") or movie.get("name") or query
-                desc = movie.get("overview", "")
+                desc = movie.get("overview", "لا يوجد وصف متوفر.")
                 poster_path = movie.get("poster_path")
                 poster_url = f"https://image.tmdb.org/t/p/w500{poster_path}" if poster_path else ""
                 
-                # تقصير الوصف إذا كان طويلاً جداً لحفظ مساحة الـ Embed
+                # اختصار القصة بشكل احترافي عشان مساحة الإمبيد والترتيب
                 if len(desc) > 120:
                     desc = desc[:117] + "..."
                     
                 return {"title": title, "desc": desc, "poster": poster_url}
-    except Exception:
-        pass
-    # في حال لم يجد الفيلم أو حدث خطأ في الاتصال، يعتمد النص المكتوب يدوياً
-    return {"title": query, "desc": "", "poster": ""}
+    except Exception as e:
+        print(f"Error fetching from TMDB: {e}")
+    
+    # في حال لم يعثر على شيء في البحث يعتمد النص الأصلي المدخل
+    return {"title": query, "desc": "تمت إضافته يدوياً (لم يعثر على بيانات التقييم).", "poster": ""}
 
-# ─── Dynamic Clean Cinema Embed ───────────────────────────
+# ─── Dynamic Premium Cinema Embed ─────────────────────────
 def build_premium_cinema_embed(list_name: str, items: list) -> discord.Embed:
     embed = discord.Embed(
         title=f"Wonderland • {list_name.upper()}",
@@ -83,7 +84,7 @@ def build_premium_cinema_embed(list_name: str, items: list) -> discord.Embed:
         desc = get_desc(item)
         poster = get_poster(item)
         
-        # مظهر رسمي فخم للأفلام بروابط بوسترات مباشرة ومخفية ذكياً
+        # التنسيق الهيكلي الفخم: الرقم، الاسم، القصة، مع رابط البوستر الصافي المخفي
         line = f"**{i+1:02d}. {title}**"
         if desc:
             line += f" — *{desc}*"
@@ -94,18 +95,18 @@ def build_premium_cinema_embed(list_name: str, items: list) -> discord.Embed:
 
     embed.description = "\n\n".join(description_lines)
     
-    # الحل العبقري: إظهار بوستر الفيلم الأول كصورة ضخمة بالأسفل لإعطاء مظهر سينمائي فخم بدون ثقل
+    # اللمسة الأسطورية: أخذ بوستر الفيلم الأول في القائمة وعرضه كخلفية ضخمة وممتلئة أسفل الـ Embed
     first_poster = get_poster(items[0])
     if first_poster:
         embed.set_image(url=first_poster)
         
     return embed
 
-# ─── Modals (إدارة ذكية ومبسطة) ─────────────────────────────
+# ─── Modals (إدارة ذكية سريعة) ──────────────────────────────
 class AddItemModal(discord.ui.Modal, title="إضافة عمل ذكي"):
     item_title = discord.ui.TextInput(
         label="اسم الفيلم أو المسلسل (عربي أو إنجليزي)", 
-        placeholder="مثال: Interstellar أو inception", 
+        placeholder="مثال: Interstellar أو Breaking Bad", 
         required=True
     )
 
@@ -117,7 +118,7 @@ class AddItemModal(discord.ui.Modal, title="إضافة عمل ذكي"):
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         
-        # البحث التلقائي وجلب البيانات بلمح البصر
+        # جلب البيانات التلقائية باستخدام محرك البحث المحدث
         movie_details = fetch_movie_details(self.item_title.value)
         
         data = load_data()
@@ -129,7 +130,7 @@ class AddItemModal(discord.ui.Modal, title="إضافة عمل ذكي"):
             embed = build_premium_cinema_embed(self.list_name, items)
             view = ListView(self.list_name, items, can_manage(interaction.user), self.list_names)
             
-            # تحديث الواجهة الرئيسية فوراً
+            # تحديث لوحة التحكم الرئيسية فوراً دون الحاجة لعمل تحديث يدوي للبانل
             panel_info = data.get("panel_message", {})
             guild_key = str(interaction.guild.id)
             msg_id = panel_info.get(guild_key)
@@ -140,7 +141,7 @@ class AddItemModal(discord.ui.Modal, title="إضافة عمل ذكي"):
                 except discord.NotFound:
                     pass
                     
-            await interaction.followup.send(f"✅ تم تلقائياً جلب وإضافة: **{movie_details['title']}**", ephemeral=True)
+            await interaction.followup.send(f"✅ تم سحب بيانات العمل وإضافته بنجاح: **{movie_details['title']}**", ephemeral=True)
         else:
             await interaction.followup.send("خطأ: القائمة غير موجودة.", ephemeral=True)
 
@@ -204,7 +205,7 @@ class ManageDashboardView(discord.ui.View):
         view = ListView(self.list_name, items, can_manage(interaction.user), self.list_names)
         await interaction.response.edit_message(embed=embed, view=view)
 
-# ─── Dynamic List View (التنقل الدائم السريع دقة عالية) ───
+# ─── Dynamic List View (التنقل اللحظي السريع) ─────────────
 class ListView(discord.ui.View):
     def __init__(self, current_list_name: str, items: list, is_manager: bool, list_names: list[str]):
         super().__init__(timeout=None)
