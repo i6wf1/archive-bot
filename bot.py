@@ -9,7 +9,7 @@ from pathlib import Path
 
 # ─── Config ───────────────────────────────────────────────
 DATA_FILE = "data/lists.json"
-MANAGER_ROLE_NAME = "Archive Manager"  # رتبة الإدارة والتحكم
+MANAGER_ROLE_NAME = "Archive Manager"
 TMDB_API_KEY = "0bce26c0165650e02aec5943e60395ad"
 
 # ─── Data helpers ─────────────────────────────────────────
@@ -40,11 +40,7 @@ def get_desc(item) -> str:
     return item.get("desc", "") if isinstance(item, dict) else ""
 
 def get_ratings(item) -> dict:
-    """جلب تقييمات الأعضاء المخزنة للفيلم"""
     return item.get("ratings", {}) if isinstance(item, dict) else {}
-
-def get_list_emoji(list_data: dict) -> str:
-    return list_data.get("emoji", "📁")
 
 # ─── TMDB Official Primary Poster Fetcher ─────────────────
 def fetch_official_theatrical_details(query: str) -> dict:
@@ -87,14 +83,17 @@ def build_separate_embeds(list_name: str, items: list) -> list[discord.Embed]:
         embed = discord.Embed(color=0x1a1a1a)
         embed.title = f"{i+1:02d}. {title}"
         
-        # بناء نص الوصف الأساسي
         content = f"{desc if desc else 'لا يوجد وصف.'}"
         
-        # إضافة تقييمات الأعضاء المشتركة أسفل الوصف بشكل منظم جداً لو كانت موجودة
+        # تحويل أرقام التقييمات تلقائياً إلى نجوم مرئية فخمة للعين
         if ratings:
             content += "\n\n**👥 تقييمات الأعضاء:**"
-            for user_name, user_rating in ratings.items():
-                content += f"\n▫️ {user_name}: `{user_rating}`"
+            for user_name, star_count in ratings.items():
+                try:
+                    stars_display = "⭐" * int(star_count)
+                except ValueError:
+                    stars_display = "⭐"  # حماية في حال وجود قيمة قديمة نصية
+                content += f"\n▫️ {user_name}: {stars_display}"
                 
         embed.description = f"{content}{invisible_filler}"
             
@@ -105,10 +104,10 @@ def build_separate_embeds(list_name: str, items: list) -> list[discord.Embed]:
         
     return embeds
 
-# ─── Modals (إدارة وتفاعل) ────────────────────────────────
-class RateItemModal(discord.ui.Modal, title="تقييم فيلم في اللستة"):
+# ─── Modals (النوافذ المنبثقة) ──────────────────────────────
+class RateItemModal(discord.ui.Modal, title="تقييم العمل بالنجوم"):
     item_number = discord.ui.TextInput(label="رقم الفيلم المراد تقييمه", placeholder="مثال: 1", required=True)
-    user_rating = discord.ui.TextInput(label="تقييمك ورأيك بالعمل", placeholder="مثال: 9/10 أو خيالي جداً أنصح به", required=True)
+    user_rating = discord.ui.TextInput(label="التقييم (أدخل رقم من 1 إلى 5 فقط)", placeholder="1 أو 2 أو 3 أو 4 أو 5", min_length=1, max_length=1, required=True)
 
     def __init__(self, list_name: str, list_names: list[str]):
         super().__init__()
@@ -117,28 +116,31 @@ class RateItemModal(discord.ui.Modal, title="تقييم فيلم في اللست
 
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
+        
+        # التحقق من أن المدخل رقمي وصحيح وضمن النطاق المسموح
         try:
             num = int(self.item_number.value)
+            stars = int(self.user_rating.value)
+            if stars < 1 or stars > 5:
+                raise ValueError
         except ValueError:
-            await interaction.followup.send("❌ يرجى إدخال رقم فيلم صحيح.", ephemeral=True)
+            await interaction.followup.send("❌ يرجى إدخال أرقام صحيحة، والتقييم يجب أن يكون حكراً بين 1 و 5 نجوم.", ephemeral=True)
             return
 
         data = load_data()
         items = data["lists"].get(self.list_name, {}).get("items", [])
         
         if num < 1 or num > len(items):
-            await interaction.followup.send("❌ رقم الفيلم غير موجود في القائمة الحالية.", ephemeral=True)
+            await interaction.followup.send("❌ رقم الفيلم غير موجود في القائمة.", ephemeral=True)
             return
 
-        # حفظ تقييم المستخدم باسم الحساب حقه ليكون العرض رسمي وواضح
         user_key = interaction.user.display_name
         if "ratings" not in items[num - 1] or not isinstance(items[num - 1]["ratings"], dict):
             items[num - 1]["ratings"] = {}
             
-        items[num - 1]["ratings"][user_key] = self.user_rating.value
+        items[num - 1]["ratings"][user_key] = stars
         save_data(data)
         
-        # تحديث الواجهة فوراً ليعلم الجميع بالتقييم الجديد
         embeds = build_separate_embeds(self.list_name, items)
         view = ListView(self.list_name, items, can_manage(interaction.user), self.list_names, data["lists"])
         
@@ -152,7 +154,7 @@ class RateItemModal(discord.ui.Modal, title="تقييم فيلم في اللست
             except discord.NotFound:
                 pass
                 
-        await interaction.followup.send("⭐ تم تسجيل مراجعتك وتقييمك للفيلم بنجاح الحين!", ephemeral=True)
+        await interaction.followup.send(f"✅ تم تسجيل تقييمك بنجاح بـ ({'⭐' * stars})!", ephemeral=True)
 
 class AddItemModal(discord.ui.Modal, title="إضافة عمل للستة"):
     item_title = discord.ui.TextInput(label="اسم الفيلم أو المسلسل (للبحث)", placeholder="مثال: Iron Man", required=True)
@@ -253,7 +255,7 @@ class ManageDashboardView(discord.ui.View):
             save_data(data)
         await return_to_main_panel(interaction)
 
-    @discord.ui.button(emoji="🏠", style=discord.ButtonStyle.primary, row=1)
+    @discord.ui.button(emoji="🏠", style=discord.ButtonStyle.success, row=1)
     async def back_to_view(self, interaction: discord.Interaction, button: discord.ui.Button):
         data = load_data()
         items = data["lists"].get(self.list_name, {}).get("items", [])
@@ -261,7 +263,7 @@ class ManageDashboardView(discord.ui.View):
         view = ListView(self.list_name, items, can_manage(interaction.user), self.list_names, data["lists"])
         await interaction.response.edit_message(embeds=embeds, view=view)
 
-# ─── Dynamic List View (التنقل التصفحي المطور) ───────────────
+# ─── Dynamic List View (واجهة التصفح والتحكم المتطورة) ───────
 class ListView(discord.ui.View):
     def __init__(self, current_list_name: str, items: list, is_manager: bool, list_names: list[str], all_lists_data: dict):
         super().__init__(timeout=None)
@@ -269,19 +271,17 @@ class ListView(discord.ui.View):
         self.list_names = list_names
         self.all_lists_data = all_lists_data
         
-        # الأزرار الرئيسية المختصرة بإيموجيات صافية ومميزة ⚙️ و 🏠
+        # الأزرار الأساسية (كلها باللون الأزرق ما عدا الرئيسية بالأخضر لتميزها)
         self.add_item(ManageButton(current_list_name, list_names))
         self.add_item(HomeButton())
-        
-        # زر التقييم التفاعلي لجميع أعضاء السيرفر
         self.add_item(RateButton(current_list_name, list_names))
 
+        # أزرار اللستات المضافة (أصبحت باللون الأحمر الصافي وبدون إيموجي)
         for name in list_names:
-            style = discord.ButtonStyle.success if name == current_list_name else discord.ButtonStyle.secondary
-            emoji = get_list_emoji(all_lists_data.get(name, {}))
+            style = discord.ButtonStyle.danger if name == current_list_name else discord.ButtonStyle.danger
             
             btn = discord.ui.Button(
-                label=f"{emoji} {name}",
+                label=f"{name}",  # تم حذف الإيموجي تماماً ليظهر الاسم نظيفاً
                 custom_id=f"quick_nav_{name}",
                 style=style,
                 row=1 if len(list_names) <= 5 else 2
@@ -305,9 +305,9 @@ class ListView(discord.ui.View):
 
 # ─── Specialized Action Buttons ───────────────────────────
 class RateButton(discord.ui.Button):
-    """زر التقييم التفاعلي المشترك والمتاح لجميع المستخدمين بالسيرفر"""
+    """زر النجمة الأزرق التفاعلي لتقييم الفيلم من 1 لـ 5 نجوم"""
     def __init__(self, list_name: str, list_names: list[str]):
-        super().__init__(label="⭐ تقييم العمل", style=discord.ButtonStyle.primary, row=0)
+        super().__init__(emoji="⭐", style=discord.ButtonStyle.primary, row=0)
         self.list_name = list_name
         self.list_names = list_names
 
@@ -315,9 +315,9 @@ class RateButton(discord.ui.Button):
         await interaction.response.send_modal(RateItemModal(self.list_name, self.list_names))
 
 class ManageButton(discord.ui.Button):
-    """زر الترس ⚙️ البديل لكلمة إدارة القائمة"""
+    """زر الترس ⚙️ باللون الأزرق للإدارة"""
     def __init__(self, list_name: str, list_names: list[str]):
-        super().__init__(emoji="⚙️", style=discord.ButtonStyle.danger, row=0)
+        super().__init__(emoji="⚙️", style=discord.ButtonStyle.primary, row=0)
         self.list_name = list_name
         self.list_names = list_names
 
@@ -334,7 +334,7 @@ class ManageButton(discord.ui.Button):
         await interaction.response.edit_message(embeds=[embed], view=ManageDashboardView(self.list_name, self.list_names))
 
 class HomeButton(discord.ui.Button):
-    """زر البيت 🏠 البديل لكلمة الرئيسية"""
+    """زر البيت 🏠 الأخضر للعودة للرئيسية"""
     def __init__(self):
         super().__init__(emoji="🏠", style=discord.ButtonStyle.success, row=0)
 
@@ -347,11 +347,10 @@ class PanelView(discord.ui.View):
         super().__init__(timeout=None)
         self.list_names = list_names
         for name in list_names:
-            emoji = get_list_emoji(all_lists_data.get(name, {}))
             btn = discord.ui.Button(
-                label=f"{emoji} {name}",
+                label=f"{name}",  # بدون إيموجيات
                 custom_id=f"archive_list_{name}",
-                style=discord.ButtonStyle.secondary
+                style=discord.ButtonStyle.danger  # لون أحمر لجميع اللستات المضافة
             )
             btn.callback = self.make_callback(name)
             self.add_item(btn)
@@ -376,7 +375,7 @@ async def return_to_main_panel(interaction: discord.Interaction):
     list_names = list(data["lists"].keys())
 
     if list_names:
-        lines = "\n".join(f"{get_list_emoji(v)}  **{k.upper()}** —  `{len(v.get('items', []))} Entries`" for k, v in data["lists"].items())
+        lines = "\n".join(f"🔴 **{k.upper()}** —  `{len(v.get('items', []))} Entries`" for k, v in data["lists"].items())
     else:
         lines = "لا توجد قوائم متوفرة حالياً."
 
@@ -394,7 +393,7 @@ async def refresh_panel(guild: discord.Guild, channel: discord.TextChannel):
     list_names = list(data["lists"].keys())
 
     if list_names:
-        lines = "\n".join(f"{get_list_emoji(v)}  **{k.upper()}** —  `{len(v.get('items', []))} Entries`" for k, v in data["lists"].items())
+        lines = "\n".join(f"🔴 **{k.upper()}** —  `{len(v.get('items', []))} Entries`" for k, v in data["lists"].items())
     else:
         lines = "لا توجد قوائم متوفرة حالياً."
 
@@ -444,9 +443,9 @@ async def cmd_panel(interaction: discord.Interaction):
     await refresh_panel(interaction.guild, interaction.channel)
     await interaction.followup.send("تم تحديث الواجهة الرسمية بنجاح.", ephemeral=True)
 
-@tree.command(name="list_create", description="Create a new category with a custom emoji.")
-@app_commands.describe(name="Category name", emoji="Custom emoji for this category (Optional)")
-async def cmd_list_create(interaction: discord.Interaction, name: str, emoji: str = None):
+@tree.command(name="list_create", description="Create a new category.")
+@app_commands.describe(name="Category name")
+async def cmd_list_create(interaction: discord.Interaction, name: str):
     if not can_manage(interaction.user):
         await interaction.response.send_message("⚠️ خطأ: ليس لديك صلاحية إنشاء قوائم جديدة.", ephemeral=True)
         return
@@ -456,10 +455,9 @@ async def cmd_list_create(interaction: discord.Interaction, name: str, emoji: st
         await interaction.response.send_message("القائمة موجودة مسبقاً.", ephemeral=True)
         return
     
-    assigned_emoji = emoji if emoji else "📁"
-    data["lists"][name] = {"description": "", "emoji": assigned_emoji, "items": []}
+    data["lists"][name] = {"description": "", "items": []}
     save_data(data)
-    await interaction.response.send_message(f"تم إنشاء القائمة **{name}** بالإيموجي {assigned_emoji} بنجاح!", ephemeral=True)
+    await interaction.response.send_message(f"تم إنشاء القائمة **{name}** بنجاح!", ephemeral=True)
 
 # ─── Run ──────────────────────────────────────────────────
 TOKEN = os.environ.get("DISCORD_TOKEN")
