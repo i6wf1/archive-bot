@@ -376,7 +376,8 @@ class ListView(discord.ui.View):
         self.list_names = list_names
         self.all_lists_data = all_lists_data
         
-        self.add_item(ManageButton(current_list_name, list_names))
+        if is_manager:
+            self.add_item(ManageButton(current_list_name, list_names))
         self.add_item(HomeButton())
         self.add_item(RateButton(current_list_name, list_names))
 
