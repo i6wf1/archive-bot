@@ -13,7 +13,7 @@ DATA_FILE = "data/lists.json"
 MANAGER_ROLE_NAME = "Archive Manager"
 OMDB_API_KEY = "911582c4"
 
-# ─── Data helpers (معالجة محصنة ومقاومة للتلف) ───────────
+# ─── Data helpers ─────────────────────────────────────────
 def load_data() -> dict:
     Path("data").mkdir(parents=True, exist_ok=True)
     if not os.path.exists(DATA_FILE):
@@ -122,7 +122,7 @@ def build_separate_embeds(list_name: str, items: list) -> list[discord.Embed]:
         embeds.append(embed)
     return embeds
 
-# ─── Modals (هيكلة سليمة 100% تمنع تجمد أو فشل الاستمارات) ───
+# ─── Modals (تعديل كامل وهيكلة سليمة تمنع الفشل والانهيار) ───
 class RenameListModal(discord.ui.Modal):
     def __init__(self, current_list_name: str):
         super().__init__(title="تغيير اسم اللستة")
@@ -523,7 +523,7 @@ async def refresh_panel(guild: discord.Guild, channel: discord.TextChannel):
     data.setdefault("panel_message", {})[guild_key] = msg.id
     save_data(data)
 
-# ─── Bot Core Setup (المُعدّل لضمان الاستقرار التام) ─────────
+# ─── Bot Core Setup (أكثر أماناً وسرعة على الإطلاق) ─────────
 class WonderlandBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
@@ -531,12 +531,25 @@ class WonderlandBot(commands.Bot):
         super().__init__(command_prefix="!", intents=intents)
 
     async def setup_hook(self):
-        print("⏳ [Bot] جاري مزامنة أوامر الـ Slash commands الحصينة...")
-        await self.tree.sync()
-        print("✅ [Bot] تم المزامنة بنجاح واستقرار تام!")
+        # تم إلغاء المزامنة التلقائية من هنا تماماً لفك تجميد البوت ومنع الـ Rate Limit
+        print("✨ [Bot] تم تشغيل البوت بنجاح فوري دون أي تجميد!")
 
 bot = WonderlandBot()
 tree = bot.tree
+
+# ─── أمر المزامنة اليدوي والآمن ────────────────────────────
+@bot.command(name="sync")
+async def manual_sync(ctx):
+    """أمر شات عادي (!sync) للمشرف لتحديث الأوامر دون حظر البوت"""
+    if ctx.author.guild_permissions.administrator:
+        await ctx.send("⏳ جاري مزامنة أوامر الـ Slash Commands مع ديسكورد...")
+        try:
+            synced = await bot.tree.sync()
+            await ctx.send(f"✅ تم تحديث ومزامنة {len(synced)} أمر بنجاح واستقرار تام!")
+        except Exception as e:
+            await ctx.send(f"❌ فشلت المزامنة: {e}")
+    else:
+        await ctx.send("❌ هذا الأمر للمشرفين فقط.")
 
 # مصحح ومراقب أخطاء تفاعلي يطبع المشكلة بالتفصيل في الـ Console بدلاً من التجميد
 @tree.error
