@@ -74,7 +74,7 @@ def build_separate_embeds(list_name: str, items: list) -> list[discord.Embed]:
         embed = discord.Embed(
             title=f"Wonderland • {list_name.upper()}", 
             description="هذه القائمة فارغة حالياً.", 
-            color=0xd3beab  # تم التعديل للون المطلوب
+            color=0xd3beab
         )
         return [embed]
     
@@ -87,7 +87,6 @@ def build_separate_embeds(list_name: str, items: list) -> list[discord.Embed]:
         ratings = get_ratings(item)
         year = get_year(item)
         
-        # تم تطبيق اللون الجديد هنا أيضاً للحواف الطولية
         embed = discord.Embed(color=0xd3beab)
         
         if year:
@@ -307,6 +306,38 @@ class ItemEditorDashboard(discord.ui.View):
         await update_global_panel(interaction, embeds, view)
         await interaction.followup.send(content="✅ تم حذف الفيلم بنجاح وتحديث اللستة.", embed=None, view=None)
 
+# ─── Grouped Modification Sub-View ────────────────────────
+class ListModificationSubView(discord.ui.View):
+    def __init__(self, list_name: str, list_names: list[str]):
+        super().__init__(timeout=60)
+        self.list_name = list_name
+        self.list_names = list_names
+
+    @discord.ui.button(label="تعديل الأفلام وترتيبها", style=discord.ButtonStyle.primary)
+    async def edit_items(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(ChooseItemToManageModal(self.list_name, self.list_names))
+
+    @discord.ui.button(label="تعديل اسم اللستة", style=discord.ButtonStyle.secondary)
+    async def rename_list(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(RenameListModal(self.list_name))
+
+    @discord.ui.button(label="حذف اللستة كاملة", style=discord.ButtonStyle.danger)
+    async def delete_list(self, interaction: discord.Interaction, button: discord.ui.Button):
+        data = load_data()
+        if self.list_name in data["lists"]:
+            del data["lists"][self.list_name]
+            save_data(data)
+        await return_to_main_panel(interaction)
+
+    @discord.ui.button(emoji="⬅️", style=discord.ButtonStyle.success)
+    async def back_to_dashboard(self, interaction: discord.Interaction, button: discord.ui.Button):
+        embed = discord.Embed(
+            title=f"إدارة — {self.list_name}",
+            description="التحكم الكامل والذكي بمحتوى وتعديل القائمة، ترتيب الأعمال، تغيير اسم اللستة أو حذفها.",
+            color=0xd3beab
+        )
+        await interaction.response.edit_message(embeds=[embed], view=ManageDashboardView(self.list_name, self.list_names))
+
 # ─── Manage Dashboard View ────────────────────────────────
 class ManageDashboardView(discord.ui.View):
     def __init__(self, list_name: str, list_names: list[str]):
@@ -314,27 +345,22 @@ class ManageDashboardView(discord.ui.View):
         self.list_name = list_name
         self.list_names = list_names
 
-    @discord.ui.button(label="إضافة فيلم", style=discord.ButtonStyle.primary, row=0)
+    # تم تغيير اسم الزر إلى "اضافة" فقط
+    @discord.ui.button(label="اضافة", style=discord.ButtonStyle.primary, row=0)
     async def add_item_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(AddItemModal(self.list_name, self.list_names))
 
-    @discord.ui.button(label="تعديل الأفلام وترتيبها", style=discord.ButtonStyle.primary, row=0)
-    async def manage_items_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(ChooseItemToManageModal(self.list_name, self.list_names))
+    # تم دمج الخيارات الثلاثة داخل هذا الخيار الجديد باسم "التعديل"
+    @discord.ui.button(label="التعديل", style=discord.ButtonStyle.primary, row=0)
+    async def modify_group_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        embed = discord.Embed(
+            title=f"لوحة التعديل — {self.list_name}",
+            description="اختر الإجراء المطلوب لتعديل محتويات الأفلام، اسم اللستة، أو إزالتها نهائياً.",
+            color=0xd3beab
+        )
+        await interaction.response.edit_message(embeds=[embed], view=ListModificationSubView(self.list_name, self.list_names))
 
-    @discord.ui.button(label="تعديل اسم اللستة", style=discord.ButtonStyle.secondary, row=1)
-    async def rename_list_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(RenameListModal(self.list_name))
-
-    @discord.ui.button(label="حذف اللستة كاملة", style=discord.ButtonStyle.danger, row=1)
-    async def delete_list_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        data = load_data()
-        if self.list_name in data["lists"]:
-            del data["lists"][self.list_name]
-            save_data(data)
-        await return_to_main_panel(interaction)
-
-    @discord.ui.button(emoji="🏠", style=discord.ButtonStyle.success, row=2)
+    @discord.ui.button(emoji="🏠", style=discord.ButtonStyle.success, row=1)
     async def back_to_view(self, interaction: discord.Interaction, button: discord.ui.Button):
         data = load_data()
         items = data["lists"].get(self.list_name, {}).get("items", [])
@@ -402,8 +428,8 @@ class RateButton(discord.ui.Button):
 
 class ManageButton(discord.ui.Button):
     def __init__(self, list_name: str, list_names: list[str]):
-        # تم تغيير اسم الخيار الخارجي للترس إلى "الادارة" بناءً على طلبك
-        super().__init__(label="الادارة", emoji="⚙️", style=discord.ButtonStyle.success, row=0)
+        # تم إزالة كلمة "الادارة" والاعتماد بالكامل على إيموجي الترس فقط
+        super().__init__(emoji="⚙️", style=discord.ButtonStyle.success, row=0)
         self.list_name = list_name
         self.list_names = list_names
 
