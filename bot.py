@@ -42,7 +42,10 @@ def get_desc(item) -> str:
 def get_ratings(item) -> dict:
     return item.get("ratings", {}) if isinstance(item, dict) else {}
 
-# ─── TMDB Official Primary Poster Fetcher ─────────────────
+def get_year(item) -> str:
+    return item.get("year", "") if isinstance(item, dict) else ""
+
+# ─── TMDB Official Primary Poster & Year Fetcher ──────────
 def fetch_official_theatrical_details(query: str) -> dict:
     try:
         encoded_query = urllib.parse.quote(query)
@@ -56,12 +59,17 @@ def fetch_official_theatrical_details(query: str) -> dict:
                 title = movie.get("original_title") or movie.get("original_name") or movie.get("title") or query
                 poster_path = movie.get("poster_path")
                 poster_url = f"https://image.tmdb.org/t/p/w500{poster_path}" if poster_path else ""
-                return {"title": title, "poster": poster_url, "ratings": {}}
+                
+                # جلب تاريخ النزول واستخراج السنة منه فقط
+                release_date = movie.get("release_date") or movie.get("first_air_date") or ""
+                year = release_date.split("-")[0] if "-" in release_date else ""
+                
+                return {"title": title, "poster": poster_url, "year": year, "ratings": {}}
     except Exception as e:
         print(f"Error fetching from TMDB: {e}")
-    return {"title": query, "poster": "", "ratings": {}}
+    return {"title": query, "poster": "", "year": "", "ratings": {}}
 
-# ─── Equalized Miniature Embeds Builder ───────────────────
+# ─── Clean Natural Embeds Builder ─────────────────────────
 def build_separate_embeds(list_name: str, items: list) -> list[discord.Embed]:
     if not items:
         embed = discord.Embed(
@@ -78,11 +86,16 @@ def build_separate_embeds(list_name: str, items: list) -> list[discord.Embed]:
         desc = get_desc(item).strip()
         poster = get_poster(item)
         ratings = get_ratings(item)
+        year = get_year(item)
         
         embed = discord.Embed(color=0x1a1a1a)
-        embed.title = f"{i+1:02d}. {title}"
         
-        # بناء النص الأساسي بدون فرض كلمة "فيلم جميل"
+        # إضافة السنة بجانب الاسم بين قوسين إذا كانت متوفرة
+        if year:
+            embed.title = f"{i+1:02d}. {title} ({year})"
+        else:
+            embed.title = f"{i+1:02d}. {title}"
+        
         content = f"{desc}" if desc else ""
         
         if ratings:
@@ -96,21 +109,7 @@ def build_separate_embeds(list_name: str, items: list) -> list[discord.Embed]:
                     stars_display = "⭐"
                 content += f"\n▫️ {user_name}: {stars_display}"
                 
-        # ─── هندسة موازنة الارتفاع الذكية ───
-        # نقوم بحساب الطول التقريبي للنص والعنوان لحشو الفراغات المخفية بشكل ديناميكي ومثالي
-        combined_len = len(embed.title) + len(content)
-        target_len = 120  # العتبة القياسية لضمان تمدد المستطيل لأقصى حجم ثابت
-        
-        padding_lines = 0
-        if combined_len < target_len:
-            padding_lines = max(1, (target_len - combined_len) // 25)
-            
-        # إضافة السطور المخفية لتوحيد حجم المستطيل بالملي
-        filler = ""
-        if padding_lines > 0:
-            filler = "\n" + "\n".join("\u200b" + " " * 40 for _ in range(padding_lines))
-            
-        embed.description = f"{content}{filler}"
+        embed.description = content if content else None
         
         if poster:
             embed.set_thumbnail(url=poster)
@@ -168,7 +167,6 @@ class AddItemModal(discord.ui.Modal, title="إضافة عمل للستة"):
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         details = fetch_official_theatrical_details(self.item_title.value)
-        # إذا ترك المستخدم الحقل فارغاً يتم تسجيله كنص فارغ تماماً بدون إضافات تلقائية
         details["desc"] = self.item_desc.value.strip() if self.item_desc.value else ""
         
         data = load_data()
@@ -223,10 +221,12 @@ class EditItemDetailsModal(discord.ui.Modal, title="تعديل تفاصيل ال
         self.new_title = discord.ui.TextInput(label="اسم الفيلم الجديد", default=get_title(item), required=True)
         self.new_desc = discord.ui.TextInput(label="الوصف الجديد (اتركه فارغاً لإلغائه)", style=discord.TextStyle.paragraph, default=get_desc(item), required=False)
         self.new_order = discord.ui.TextInput(label="الترتيب الجديد في القائمة (رقم)", default=str(index + 1), required=True)
+        self.new_year = discord.ui.TextInput(label="السنة (مثال: 2008)", default=get_year(item), required=False)
         
         self.add_item(self.new_title)
         self.add_item(self.new_desc)
         self.add_item(self.new_order)
+        self.add_item(self.new_year)
 
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
@@ -245,6 +245,7 @@ class EditItemDetailsModal(discord.ui.Modal, title="تعديل تفاصيل ال
         curr_item = items.pop(self.index)
         curr_item["title"] = self.new_title.value
         curr_item["desc"] = self.new_desc.value.strip() if self.new_desc.value else ""
+        curr_item["year"] = self.new_year.value.strip()
         
         items.insert(target_pos - 1, curr_item)
         save_data(data)
@@ -278,7 +279,7 @@ class ItemEditorDashboard(discord.ui.View):
         embeds = build_separate_embeds(self.list_name, items)
         view = ListView(self.list_name, items, can_manage(interaction.user), self.list_names, data["lists"])
         await update_global_panel(interaction, embeds, view)
-        await interaction.response.edit_message(content="✅ تم حذف الفيلم بنجاح وتحديث اللستة.", embed=None, view=None)
+        await interaction.followup.send(content="✅ تم حذف الفيلم بنجاح وتحديث اللستة.", embed=None, view=None)
 
 # ─── Manage Dashboard View ────────────────────────────────
 class ManageDashboardView(discord.ui.View):
