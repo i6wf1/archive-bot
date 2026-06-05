@@ -132,7 +132,7 @@ async def setup_ephemeral_close_reaction(interaction: discord.Interaction):
 
         try:
             await interaction.client.wait_for("reaction_add", check=check)
-            await interaction.delete_original_message()
+            await interaction.delete_original_response()
         except Exception:
             pass
     except Exception as e:
@@ -259,9 +259,9 @@ class RateStarsView(discord.ui.View):
             items[self.index]["ratings"][interaction.user.display_name] = stars
             save_data(data)
             
-        await interaction.response.send_message(f"✅ تم تسجيل تقييمك ({stars} نجوم) لـ **{get_title(items[self.index])}** بنجاح!", ephemeral=True)
+        # نقوم بحذف الرسالة المخفية بالكامل فوراً لعدم إزعاج المستخدم
         try:
-            await interaction.delete_original_message()
+            await interaction.delete_original_response()
         except Exception:
             pass
             
@@ -648,7 +648,7 @@ class RateButton(discord.ui.Button):
         
         embed = discord.Embed(
             title="⭐ قائمة التقييم السريعة", 
-            description="اختر العمل الذي ترغب في تقييمه من القائمة المنسدلة بالأسفل.\n\n❌ *اضغط على ريأكشن الاكس بالأسفل لإغلاق هذه اللوحة في أي وقت.*", 
+            description="اختر العمل الذي ترغب في تقييمه من القائمة المنسدلة بالأسفل.", 
             color=0xd3beab
         )
         target_page = self.origin_index // 23
@@ -671,7 +671,7 @@ class ManageButton(discord.ui.Button):
         try:
             embed = discord.Embed(
                 title=f"إدارة — {self.list_name}",
-                description="التحكم الكامل والذكي بمحتوى وتعديل القائمة، ترتيب الأعمال، تغيير اسم اللستة أو حذفها.\n\n❌ *اضغط على ريأكشن الاكس بالأسفل لإغلاق هذه اللوحة في أي وقت.*",
+                description="التحكم الكامل والذكي بمحتوى وتعديل القائمة، ترتيب الأعمال، تغيير اسم اللستة أو حذفها.",
                 color=0xd3beab
             )
             dash_view = ManageDashboardView(self.list_name, self.list_names, 0)
@@ -688,6 +688,7 @@ class HomeButton(discord.ui.Button):
         super().__init__(emoji="🏠", style=discord.ButtonStyle.success, row=0)
 
     async def callback(self, interaction: discord.Interaction):
+        # تم التعديل ليعود للرئيسية في نفس الرسالة تماماً دون فتح رسالة جديدة
         data = load_data()
         list_names = list(data["lists"].keys())
         embed = build_panel_embed(data)
@@ -783,12 +784,14 @@ class ListView(discord.ui.View):
             prev_btn.callback = self.make_move_cb(-1)
             self.add_item(prev_btn)
 
+            # التعديل: الزر الآن غيـر معطل (disabled=False) حتى لا يصبح باهتاً، ولكنه لا يتفاعل عند الضغط
             indicator_btn = discord.ui.Button(
                 label=f"{current_item_idx + 1}/{len(items)}",
                 style=discord.ButtonStyle.primary,
-                disabled=True,
+                disabled=False,
                 row=1
             )
+            indicator_btn.callback = self.prevent_interaction_cb
             self.add_item(indicator_btn)
 
             next_btn = discord.ui.Button(emoji="▶️", style=discord.ButtonStyle.secondary, row=1)
@@ -798,13 +801,18 @@ class ListView(discord.ui.View):
             current_btn = discord.ui.Button(
                 label=f"1/1" if items else "0/0",
                 style=discord.ButtonStyle.primary,
-                disabled=True,
+                disabled=False,
                 row=1
             )
+            current_btn.callback = self.prevent_interaction_cb
             self.add_item(current_btn)
 
         if items:
             self.add_item(JumpToMovieDropdown(current_list_name, list_names, items, jump_page))
+
+    async def prevent_interaction_cb(self, interaction: discord.Interaction):
+        # يقوم فقط بتهدئة الديسكورد دون تغيير أي شيء، ليبقى الزر واضح اللون وبدون استجابة فعلية
+        await interaction.response.defer()
 
     def make_move_cb(self, direction: int):
         async def callback(interaction: discord.Interaction):
