@@ -7,6 +7,7 @@ import urllib.parse
 import aiohttp
 from pathlib import Path
 import traceback
+import asyncio
 
 # ─── Config ───────────────────────────────────────────────
 DATA_FILE = "data/lists.json"
@@ -78,21 +79,21 @@ async def fetch_official_theatrical_details(query: str) -> dict:
         print(f"🚨 [OMDb Error]: {e}")
     return {"title": query, "poster": "", "year": "", "ratings": {}}
 
-# ─── Embeds Builder (التحديث الشامل لتكبير الخط وإضافة الدائرة الحمراء) ───
+# ─── Embeds Builder ───────────────────────────────────────
 def _build_item_embed(list_name: str, item: dict, real_index: int, total_items: int) -> discord.Embed:
     embed = discord.Embed(color=0xd3beab)
     year = get_year(item)
     
-    # 1+2. وضع اسم اللستة في الأعلى مع إيموجي الدائرة الحمراء وحذف الترتيب من هناك
-    embed.set_author(name=f"🔴 {list_name.upper()}")
+    # 2. إضافة كلمة List: بجانب اسم اللستة للتوضيح
+    embed.set_author(name=f"🔴 List: {list_name.upper()}")
     
-    # 4. جعل اسم العمل وسنة الإنتاج كعنوان رئيسي للإمبد ليظهر بشكل عريض وأكبر خط ممكن
     embed.title = f"{get_title(item)}" + (f" ({year})" if year else "")
     
     content = ""
     desc = get_desc(item).strip()
     if desc:
-        content += f"**📝 القصة / التقييم الخاص:**\n{desc}"
+        # 1. تغيير العبارة إلى "الوصف:" مع الأيموجي المخصص
+        content += f"**📝 الوصف:**\n{desc}"
         
     ratings = get_ratings(item)
     if ratings:
@@ -123,6 +124,19 @@ def build_panel_embed(data: dict) -> discord.Embed:
         lines = "لا توجد قوائم متوفرة حالياً."
     return discord.Embed(title="🌿 Wonderland Lists", description=f"\n{lines}\n", color=0xd3beab)
 
+# ─── Auto-Timeout Global Handler ──────────────────────────
+async def handle_view_timeout(interaction: discord.Interaction):
+    """3. دالة ذكية عند انتهاء الـ 5 دقائق تقوم بإعادة الواجهة للبانل الرئيسي تلقائياً"""
+    try:
+        if interaction and interaction.message:
+            data = load_data()
+            list_names = list(data["lists"].keys())
+            embed = build_panel_embed(data)
+            view = PanelView(list_names, data["lists"])
+            await interaction.message.edit(embeds=[embed], view=view)
+    except Exception:
+        pass
+
 # ─── Modals ───────────────────────────────────────────────
 class RenameListModal(discord.ui.Modal):
     def __init__(self, current_list_name: str):
@@ -148,15 +162,17 @@ class RenameListModal(discord.ui.Modal):
         view = PanelView(list_names, data["lists"])
         await interaction.response.edit_message(embeds=[embed], view=view)
 
-# ─── Rating System (تمت إعادة الهيكلة الكاملة ليعمل بسلاسة داخل الإمبد الأساسي) ───
+# ─── Rating System ────────────────────────────────────────
 class RateItemSelectView(discord.ui.View):
-    def __init__(self, list_name: str, list_names: list[str], items: list, page: int = 0, origin_index: int = 0):
-        super().__init__(timeout=120)
+    def __init__(self, list_name: str, list_names: list[str], items: list, page: int = 0, origin_index: int = 0, interaction: discord.Interaction = None):
+        # 3. تفعيل مؤقت الـ 5 دقائق (300 ثانية) واحتفاظ برابط الـ interaction للعودة التلقائية
+        super().__init__(timeout=300)
         self.list_name = list_name
         self.list_names = list_names
         self.items = items
         self.page = page
         self.origin_index = origin_index
+        self.interaction = interaction
 
         options = []
         start = page * 23
@@ -186,33 +202,39 @@ class RateItemSelectView(discord.ui.View):
         select.callback = self.on_select
         self.add_item(select)
 
+    async def on_timeout(self):
+        # 3. العودة التلقائية عند انتهاء الخمس دقائق بدون استخدام للتقييم
+        await handle_view_timeout(self.interaction)
+
     async def on_select(self, interaction: discord.Interaction):
+        self.interaction = interaction
         val = interaction.data["values"][0]
         if val == "next_page_rate":
-            view = RateItemSelectView(self.list_name, self.list_names, self.items, self.page + 1, self.origin_index)
+            view = RateItemSelectView(self.list_name, self.list_names, self.items, self.page + 1, self.origin_index, interaction)
             await interaction.response.edit_message(view=view)
             return
         elif val == "prev_page_rate":
-            view = RateItemSelectView(self.list_name, self.list_names, self.items, self.page - 1, self.origin_index)
+            view = RateItemSelectView(self.list_name, self.list_names, self.items, self.page - 1, self.origin_index, interaction)
             await interaction.response.edit_message(view=view)
             return
 
         index = int(val)
         item = self.items[index]
-        view = RateStarsView(self.list_name, self.list_names, index, item, self.origin_index)
+        view = RateStarsView(self.list_name, self.list_names, index, item, self.origin_index, interaction)
         
         embed = interaction.message.embeds[0]
         embed.title = f"⭐ تقييم: {get_title(item)}"
         await interaction.response.edit_message(embeds=[embed], view=view)
 
 class RateStarsView(discord.ui.View):
-    def __init__(self, list_name: str, list_names: list[str], index: int, item: dict, origin_index: int):
-        super().__init__(timeout=120)
+    def __init__(self, list_name: str, list_names: list[str], index: int, item: dict, origin_index: int, interaction: discord.Interaction = None):
+        super().__init__(timeout=300)
         self.list_name = list_name
         self.list_names = list_names
         self.index = index
         self.item = item
         self.origin_index = origin_index
+        self.interaction = interaction
 
         stars_options = [
             discord.SelectOption(label="⭐ نجمة واحدة", value="1"),
@@ -229,7 +251,11 @@ class RateStarsView(discord.ui.View):
         select.callback = self.on_stars_select
         self.add_item(select)
 
+    async def on_timeout(self):
+        await handle_view_timeout(self.interaction)
+
     async def on_stars_select(self, interaction: discord.Interaction):
+        self.interaction = interaction
         stars = int(interaction.data["values"][0])
         data = load_data()
         items = data["lists"].get(self.list_name, {}).get("items", [])
@@ -239,10 +265,10 @@ class RateStarsView(discord.ui.View):
             items[self.index]["ratings"][interaction.user.display_name] = stars
             save_data(data)
             
-        # العودة التلقائية الفورية لواجهة العمل الأساسي المستهدف بعد التقييم بنجاح بدون إرسال أي رسائل جانبية
         embed = _build_item_embed(self.list_name, items[self.origin_index], self.origin_index, len(items))
         target_jump_page = self.origin_index // 23
         view = ListView(self.list_name, items, can_manage(interaction.user), self.list_names, data["lists"], self.origin_index, target_jump_page)
+        view.interaction = interaction
         await interaction.response.edit_message(embeds=[embed], view=view)
         await update_global_panel_msg(interaction, [embed], view)
 
@@ -270,6 +296,7 @@ class AddItemModal(discord.ui.Modal):
             last_idx = len(items) - 1
             embed = _build_item_embed(self.list_name, items[last_idx], last_idx, len(items))
             view = ListView(self.list_name, items, can_manage(interaction.user), self.list_names, data["lists"], last_idx)
+            view.interaction = interaction
             await update_global_panel_msg(interaction, [embed], view)
             
         mgr_embed = discord.Embed(
@@ -277,7 +304,9 @@ class AddItemModal(discord.ui.Modal):
             description="التحكم الكامل والذكي بمحتوى وتعديل القائمة، ترتيب الأعمال، تغيير اسم اللستة أو حذفها.",
             color=0xd3beab
         )
-        await interaction.message.edit(embeds=[mgr_embed], view=ManageDashboardView(self.list_name, self.list_names))
+        dash_view = ManageDashboardView(self.list_name, self.list_names)
+        dash_view.interaction = interaction
+        await interaction.message.edit(embeds=[mgr_embed], view=dash_view)
 
 class EditItemDetailsModal(discord.ui.Modal):
     def __init__(self, list_name: str, list_names: list[str], index: int, item: dict):
@@ -314,6 +343,7 @@ class EditItemDetailsModal(discord.ui.Modal):
         new_idx = target_pos - 1
         embed = _build_item_embed(self.list_name, items[new_idx], new_idx, len(items))
         view = ListView(self.list_name, items, can_manage(interaction.user), self.list_names, data["lists"], new_idx)
+        view.interaction = interaction
         await update_global_panel_msg(interaction, [embed], view)
         
         mgr_embed = discord.Embed(
@@ -321,7 +351,9 @@ class EditItemDetailsModal(discord.ui.Modal):
             description="التحكم الكامل والذكي بمحتوى وتعديل القائمة، ترتيب الأعمال، تغيير اسم اللستة أو حذفها.",
             color=0xd3beab
         )
-        await interaction.response.edit_message(embeds=[mgr_embed], view=ManageDashboardView(self.list_name, self.list_names))
+        dash_view = ManageDashboardView(self.list_name, self.list_names)
+        dash_view.interaction = interaction
+        await interaction.response.edit_message(embeds=[mgr_embed], view=dash_view)
 
 class ReorderListsModal(discord.ui.Modal):
     def __init__(self, list_names: list[str]):
@@ -366,19 +398,25 @@ class ReorderListsModal(discord.ui.Modal):
 
 # ─── Item Editor Dashboard ────────────────────────────────
 class ItemEditorDashboard(discord.ui.View):
-    def __init__(self, list_name: str, list_names: list[str], num: int, item: dict):
-        super().__init__(timeout=120)
+    def __init__(self, list_name: str, list_names: list[str], num: int, item: dict, interaction: discord.Interaction = None):
+        super().__init__(timeout=300)
         self.list_name = list_name
         self.list_names = list_names
         self.index = num - 1
         self.item = item
+        self.interaction = interaction
+
+    async def on_timeout(self):
+        await handle_view_timeout(self.interaction)
 
     @discord.ui.button(label="✏️ تعديل (الاسم / الوصف / الترتيب / السنة)", style=discord.ButtonStyle.primary, row=0)
     async def edit_fields(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.interaction = interaction
         await interaction.response.send_modal(EditItemDetailsModal(self.list_name, self.list_names, self.index, self.item))
 
     @discord.ui.button(label="🗑️ حذف هذا العمل نهائياً", style=discord.ButtonStyle.danger, row=0)
     async def delete_item(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.interaction = interaction
         data = load_data()
         items = data["lists"].get(self.list_name, {}).get("items", [])
         if 0 <= self.index < len(items):
@@ -392,22 +430,28 @@ class ItemEditorDashboard(discord.ui.View):
             embed = _build_item_embed(self.list_name, items[0], 0, len(items))
             view = ListView(self.list_name, items, can_manage(interaction.user), self.list_names, data["lists"], 0)
             
+        view.interaction = interaction
         await update_global_panel_msg(interaction, [embed], view)
         mgr_embed = discord.Embed(
             title=f"إدارة — {self.list_name}",
             description="التحكم الكامل والذكي بمحتوى وتعديل القائمة، ترتيب الأعمال، تغيير اسم اللستة أو حذفها.",
             color=0xd3beab
         )
-        await interaction.response.edit_message(embeds=[mgr_embed], view=ManageDashboardView(self.list_name, self.list_names))
+        dash_view = ManageDashboardView(self.list_name, self.list_names)
+        dash_view.interaction = interaction
+        await interaction.response.edit_message(embeds=[mgr_embed], view=dash_view)
 
     @discord.ui.button(label="⬅️ عودة للوحة التحكم", style=discord.ButtonStyle.secondary, row=1)
     async def back_to_mgr(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.interaction = interaction
         embed = discord.Embed(
             title=f"إدارة — {self.list_name}",
             description="التحكم الكامل والذكي بمحتوى وتعديل القائمة، ترتيب الأعمال، تغيير اسم اللستة أو حذفها.",
             color=0xd3beab
         )
-        await interaction.response.edit_message(embeds=[embed], view=ManageDashboardView(self.list_name, self.list_names))
+        dash_view = ManageDashboardView(self.list_name, self.list_names)
+        dash_view.interaction = interaction
+        await interaction.response.edit_message(embeds=[embed], view=dash_view)
 
 # ─── Dropdowns ───────────────────────────────────────────
 class ManageItemDropdown(discord.ui.Select):
@@ -441,13 +485,16 @@ class ManageItemDropdown(discord.ui.Select):
         super().__init__(placeholder=placeholder, min_values=1, max_values=1, options=options, row=2)
 
     async def callback(self, interaction: discord.Interaction):
+        self.view.interaction = interaction
         val = self.values[0]
         if val == "next_page_mgr":
             view = ManageDashboardView(self.list_name, self.list_names, self.page + 1)
+            view.interaction = interaction
             await interaction.response.edit_message(view=view)
             return
         elif val == "prev_page_mgr":
             view = ManageDashboardView(self.list_name, self.list_names, self.page - 1)
+            view.interaction = interaction
             await interaction.response.edit_message(view=view)
             return
 
@@ -462,7 +509,8 @@ class ManageItemDropdown(discord.ui.Select):
             ),
             color=0xd3beab
         )
-        await interaction.response.edit_message(embeds=[embed], view=ItemEditorDashboard(self.list_name, self.list_names, index + 1, item))
+        editor_view = ItemEditorDashboard(self.list_name, self.list_names, index + 1, item, interaction)
+        await interaction.response.edit_message(embeds=[embed], view=editor_view)
 
 
 class JumpToMovieDropdown(discord.ui.Select):
@@ -492,41 +540,50 @@ class JumpToMovieDropdown(discord.ui.Select):
         if len(items) > end:
             options.append(discord.SelectOption(label=f"▶️ عرض بقية الأفلام ({end+1} - {min(end+23, len(items))})", value="next_page_jump"))
 
-        # 6. تغيير نص الدروب داون إلى (الانتقال السريع) بناءً على رغبتك
         placeholder = "🔍 الانتقال السريع..."
         super().__init__(placeholder=placeholder, min_values=1, max_values=1, options=options, row=3)
 
     async def callback(self, interaction: discord.Interaction):
+        self.view.interaction = interaction
         val = self.values[0]
         if val == "next_page_jump":
             embed = interaction.message.embeds[0]
             view = ListView(self.list_name, self.items, can_manage(interaction.user), self.list_names, load_data()["lists"], current_item_idx=self.page*23, jump_page=self.page + 1)
+            view.interaction = interaction
             await interaction.response.edit_message(embeds=[embed], view=view)
             return
         elif val == "prev_page_jump":
             embed = interaction.message.embeds[0]
             view = ListView(self.list_name, self.items, can_manage(interaction.user), self.list_names, load_data()["lists"], current_item_idx=(self.page-1)*23, jump_page=self.page - 1)
+            view.interaction = interaction
             await interaction.response.edit_message(embeds=[embed], view=view)
             return
 
         index = int(val)
         embed = _build_item_embed(self.list_name, self.items[index], index, len(self.items))
         view = ListView(self.list_name, self.items, can_manage(interaction.user), self.list_names, load_data()["lists"], current_item_idx=index, jump_page=self.page)
+        view.interaction = interaction
         await interaction.response.edit_message(embeds=[embed], view=view)
 
 # ─── Customize List View ──────────────────────────────────
 class CustomizeListView(discord.ui.View):
-    def __init__(self, list_name: str, list_names: list[str]):
-        super().__init__(timeout=120)
+    def __init__(self, list_name: str, list_names: list[str], interaction: discord.Interaction = None):
+        super().__init__(timeout=300)
         self.list_name = list_name
         self.list_names = list_names
+        self.interaction = interaction
+
+    async def on_timeout(self):
+        await handle_view_timeout(self.interaction)
 
     @discord.ui.button(label="📝 تعديل اسم اللستة", style=discord.ButtonStyle.blurple, row=0)
     async def rename_list_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.interaction = interaction
         await interaction.response.send_modal(RenameListModal(self.list_name))
 
     @discord.ui.button(label="❌ حذف اللستة بالكامل", style=discord.ButtonStyle.danger, row=0)
     async def delete_list_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.interaction = interaction
         data = load_data()
         if self.list_name in data["lists"]:
             del data["lists"][self.list_name]
@@ -538,26 +595,31 @@ class CustomizeListView(discord.ui.View):
 
     @discord.ui.button(label="🔀 تغيير ترتيب اللستات", style=discord.ButtonStyle.secondary, row=1)
     async def reorder_lists_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.interaction = interaction
         data = load_data()
         list_names = list(data["lists"].keys())
         await interaction.response.send_modal(ReorderListsModal(list_names))
 
     @discord.ui.button(emoji="⬅️", style=discord.ButtonStyle.secondary, row=1)
     async def back_to_mgr(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.interaction = interaction
         embed = discord.Embed(
             title=f"إدارة — {self.list_name}",
             description="التحكم الكامل والذكي بمحتوى وتعديل القائمة، ترتيب الأعمال، تغيير اسم اللستة أو حذفها.",
             color=0xd3beab
         )
-        await interaction.response.edit_message(embeds=[embed], view=ManageDashboardView(self.list_name, self.list_names))
+        dash_view = ManageDashboardView(self.list_name, self.list_names)
+        dash_view.interaction = interaction
+        await interaction.response.edit_message(embeds=[embed], view=dash_view)
 
 # ─── Manage Dashboard View ───────────────────────────────
 class ManageDashboardView(discord.ui.View):
-    def __init__(self, list_name: str, list_names: list[str], page: int = 0):
-        super().__init__(timeout=120)
+    def __init__(self, list_name: str, list_names: list[str], page: int = 0, interaction: discord.Interaction = None):
+        super().__init__(timeout=300)
         self.list_name = list_name
         self.list_names = list_names
         self.page = page
+        self.interaction = interaction
         
         data = load_data()
         items = data["lists"].get(list_name, {}).get("items", [])
@@ -572,21 +634,28 @@ class ManageDashboardView(discord.ui.View):
                 row=2
             ))
 
+    async def on_timeout(self):
+        await handle_view_timeout(self.interaction)
+
     @discord.ui.button(emoji="➕", style=discord.ButtonStyle.primary, row=0)
     async def add_item_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.interaction = interaction
         await interaction.response.send_modal(AddItemModal(self.list_name, self.list_names))
 
     @discord.ui.button(emoji="🎨", style=discord.ButtonStyle.blurple, row=0)
     async def customize_list_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.interaction = interaction
         embed = discord.Embed(
             title=f"تخصيص اللستة — {self.list_name}",
             description="اختر الإجراء المطلوب:\n\n🗑️ **حذف اللستة بالكامل**\n📝 **تعديل اسم اللستة**\n🔀 **تغيير ترتيب اللستات**",
             color=0x5865F2
         )
-        await interaction.response.edit_message(embeds=[embed], view=CustomizeListView(self.list_name, self.list_names))
+        cust_view = CustomizeListView(self.list_name, self.list_names, interaction)
+        await interaction.response.edit_message(embeds=[embed], view=cust_view)
 
     @discord.ui.button(emoji="⬅️", style=discord.ButtonStyle.success, row=1)
     async def back_to_view(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.interaction = interaction
         data = load_data()
         items = data["lists"].get(self.list_name, {}).get("items", [])
         if not items:
@@ -595,6 +664,7 @@ class ManageDashboardView(discord.ui.View):
         else:
             embed = _build_item_embed(self.list_name, items[0], 0, len(items))
             view = ListView(self.list_name, items, can_manage(interaction.user), self.list_names, data["lists"], 0)
+        view.interaction = interaction
         await interaction.response.edit_message(embeds=[embed], view=view)
 
 # ─── Buttons ──────────────────────────────────────────────
@@ -606,7 +676,7 @@ class RateButton(discord.ui.Button):
         self.origin_index = origin_index
 
     async def callback(self, interaction: discord.Interaction):
-        # 5. التقييم الذكي المتجاوب الذي يفتح القائمة مباشرة بنفس طريقة الانتقال السريع دون إرسال رسائل مستقلة
+        self.view.interaction = interaction
         data = load_data()
         items = data["lists"].get(self.list_name, {}).get("items", [])
         if not items:
@@ -616,7 +686,8 @@ class RateButton(discord.ui.Button):
         embed = interaction.message.embeds[0]
         embed.title = "⭐ قائمة التقييم السريعة"
         target_page = self.origin_index // 23
-        await interaction.response.edit_message(embeds=[embed], view=RateItemSelectView(self.list_name, self.list_names, items, target_page, self.origin_index))
+        rate_view = RateItemSelectView(self.list_name, self.list_names, items, target_page, self.origin_index, interaction)
+        await interaction.response.edit_message(embeds=[embed], view=rate_view)
 
 
 class ManageButton(discord.ui.Button):
@@ -626,6 +697,7 @@ class ManageButton(discord.ui.Button):
         self.list_names = list_names
 
     async def callback(self, interaction: discord.Interaction):
+        self.view.interaction = interaction
         if not can_manage(interaction.user):
             await interaction.response.defer(ephemeral=True)
             return
@@ -635,7 +707,8 @@ class ManageButton(discord.ui.Button):
                 description="التحكم الكامل والذكي بمحتوى وتعديل القائمة، ترتيب الأعمال، تغيير اسم اللستة أو حذفها.",
                 color=0xd3beab
             )
-            await interaction.response.edit_message(embeds=[embed], view=ManageDashboardView(self.list_name, self.list_names))
+            dash_view = ManageDashboardView(self.list_name, self.list_names, 0, interaction)
+            await interaction.response.edit_message(embeds=[embed], view=dash_view)
         except Exception as e:
             print(f"🚨 خطأ أثناء فتح لوحة التحكم: {e}")
             traceback.print_exc()
@@ -646,6 +719,7 @@ class HomeButton(discord.ui.Button):
         super().__init__(emoji="🏠", style=discord.ButtonStyle.success, row=0)
 
     async def callback(self, interaction: discord.Interaction):
+        self.view.interaction = interaction
         data = load_data()
         list_names = list(data["lists"].keys())
         embed = build_panel_embed(data)
@@ -710,6 +784,7 @@ class PanelView(discord.ui.View):
             else:
                 embed = _build_item_embed(name, items[0], 0, len(items))
                 view = ListView(name, items, can_manage(interaction.user), self.list_names, data["lists"], 0)
+            view.interaction = interaction
             await interaction.response.edit_message(embeds=[embed], view=view)
         return callback
 
@@ -722,28 +797,29 @@ class PanelView(discord.ui.View):
             await interaction.response.edit_message(embeds=[embed], view=view)
         return callback
 
-# ─── List View (تطبيق صيغة العداد والزر المشرق) ───────────
+# ─── List View ───────────────────────────────────────────
 class ListView(discord.ui.View):
-    def __init__(self, current_list_name: str, items: list, is_manager: bool, list_names: list[str], all_lists_data: dict, current_item_idx: int = 0, jump_page: int = 0):
-        super().__init__(timeout=None)
+    def __init__(self, current_list_name: str, items: list, is_manager: bool, list_names: list[str], all_lists_data: dict, current_item_idx: int = 0, jump_page: int = 0, interaction: discord.Interaction = None):
+        # 3. تفعيل مؤقت الـ 5 دقائق (300 ثانية) من أجل العودة التلقائية للبانل الرئيسي
+        super().__init__(timeout=300)
         self.current_list_name = current_list_name
         self.list_names = list_names
         self.all_lists_data = all_lists_data
         self.items = items
         self.current_item_idx = current_item_idx
+        self.interaction = interaction
 
         # السطر 0 الأزرار العامة
         self.add_item(ManageButton(current_list_name, list_names))
         self.add_item(HomeButton())
         self.add_item(RateButton(current_list_name, list_names, current_item_idx))
 
-        # السطر 1 أزرار التنقل والعداد المطور
+        # السطر 1 أزرار التنقل والعداد المطور المشرق
         if len(items) > 1:
             prev_btn = discord.ui.Button(emoji="◀️", style=discord.ButtonStyle.secondary, row=1)
             prev_btn.callback = self.make_move_cb(-1)
             self.add_item(prev_btn)
 
-            # 3. تعديل صيغة العداد لتصبح سلاش (1/2) وجعله مفتوحاً ومفعلاً ليكون ساطعاً وجميلاً
             indicator_btn = discord.ui.Button(
                 label=f"{current_item_idx + 1}/{len(items)}",
                 style=discord.ButtonStyle.primary,
@@ -768,8 +844,12 @@ class ListView(discord.ui.View):
         if items:
             self.add_item(JumpToMovieDropdown(current_list_name, list_names, items, jump_page))
 
+    async def on_timeout(self):
+        await handle_view_timeout(self.interaction)
+
     def make_move_cb(self, direction: int):
         async def callback(interaction: discord.Interaction):
+            self.interaction = interaction
             new_idx = self.current_item_idx + direction
             if new_idx < 0 or new_idx >= len(self.items):
                 await interaction.response.defer(ephemeral=True)
@@ -778,12 +858,13 @@ class ListView(discord.ui.View):
             embed = _build_item_embed(self.current_list_name, self.items[new_idx], new_idx, len(self.items))
             target_jump_page = new_idx // 23
             view = ListView(self.current_list_name, self.items, can_manage(interaction.user), self.list_names, load_data()["lists"], current_item_idx=new_idx, jump_page=target_jump_page)
+            view.interaction = interaction
             await interaction.response.edit_message(embeds=[embed], view=view)
         return callback
 
     def make_refresh_cb(self):
         async def callback(interaction: discord.Interaction):
-            # ريفريش ذكي يمنع حدوث خطأ ديسكورد عند الضغط على زر العداد المفتوح
+            self.interaction = interaction
             await interaction.response.defer()
         return callback
 
