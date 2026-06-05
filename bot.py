@@ -593,6 +593,15 @@ class ListView(discord.ui.View):
         self.add_item(HomeButton())
         self.add_item(RateButton(current_list_name, list_names))
 
+        # زر اللستة الحالية كـ indicator — disabled ومضيء يوضح للمستخدم وين هو
+        current_btn = discord.ui.Button(
+            label=current_list_name,
+            style=discord.ButtonStyle.primary,
+            disabled=True,
+            row=1
+        )
+        self.add_item(current_btn)
+
 # ─── Global Panel Message Updater ─────────────────────────
 async def update_global_panel_msg(interaction: discord.Interaction, embeds, view):
     data = load_data()
@@ -695,7 +704,7 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
     traceback.print_exc()
     try:
         if not interaction.response.is_done():
-            await interaction.response.defer(ephemeral=True)
+            await interaction.response.send_message(".", ephemeral=True, delete_after=0)
     except Exception:
         pass
 
@@ -703,10 +712,10 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
 @tree.command(name="panel", description="Post/refresh the main dashboard.")
 @app_commands.guild_only()
 async def cmd_panel(interaction: discord.Interaction):
+    # رد فوري صامت ثم نحذفه — بدون defer حتى لا يظهر "thinking"
+    await interaction.response.send_message(".", ephemeral=True, delete_after=0)
     if not can_manage(interaction.user):
-        await interaction.response.defer(ephemeral=True)
         return
-    await interaction.response.defer(ephemeral=True)
     try:
         await refresh_panel_interaction(interaction, interaction.channel)
     except Exception as e:
@@ -717,10 +726,9 @@ async def cmd_panel(interaction: discord.Interaction):
 @app_commands.guild_only()
 @app_commands.describe(name="Category name")
 async def cmd_list_create(interaction: discord.Interaction, name: str):
+    await interaction.response.send_message(".", ephemeral=True, delete_after=0)
     if not can_manage(interaction.user):
-        await interaction.response.defer(ephemeral=True)
         return
-    await interaction.response.defer(ephemeral=True)
     name = name.strip()
     data = load_data()
     if name not in data["lists"]:
