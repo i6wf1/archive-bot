@@ -127,7 +127,7 @@ def build_panel_embed(data: dict) -> discord.Embed:
 async def silent_defer(interaction: discord.Interaction):
     """Acknowledge interaction silently with no visible response."""
     try:
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
     except Exception:
         pass
 
@@ -142,11 +142,11 @@ class RenameListModal(discord.ui.Modal):
     async def on_submit(self, interaction: discord.Interaction):
         new_list_name = self.new_name.value.strip()
         if not new_list_name:
-            await interaction.response.defer()
+            await interaction.response.defer(ephemeral=True)
             return
         data = load_data()
         if new_list_name in data["lists"]:
-            await interaction.response.defer()
+            await interaction.response.defer(ephemeral=True)
             return
         if self.current_list_name in data["lists"]:
             data["lists"][new_list_name] = data["lists"].pop(self.current_list_name)
@@ -174,12 +174,12 @@ class RateItemModal(discord.ui.Modal):
             if stars < 1 or stars > 5:
                 raise ValueError
         except ValueError:
-            await interaction.response.defer()
+            await interaction.response.defer(ephemeral=True)
             return
         data = load_data()
         items = data["lists"].get(self.list_name, {}).get("items", [])
         if num < 1 or num > len(items):
-            await interaction.response.defer()
+            await interaction.response.defer(ephemeral=True)
             return
         user_key = interaction.user.display_name
         if "ratings" not in items[num - 1] or not isinstance(items[num - 1]["ratings"], dict):
@@ -203,7 +203,7 @@ class AddItemModal(discord.ui.Modal):
         self.add_item(self.item_desc)
 
     async def on_submit(self, interaction: discord.Interaction):
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
         details = await fetch_official_theatrical_details(self.item_title.value)
         details["desc"] = self.item_desc.value.strip() if self.item_desc.value else ""
         data = load_data()
@@ -242,7 +242,7 @@ class EditItemDetailsModal(discord.ui.Modal):
         try:
             target_pos = int(self.new_order.value)
         except ValueError:
-            await interaction.response.defer()
+            await interaction.response.defer(ephemeral=True)
             return
         data = load_data()
         items = data["lists"].get(self.list_name, {}).get("items", [])
@@ -295,7 +295,7 @@ class ReorderListsModal(discord.ui.Modal):
         existing = list(data["lists"].keys())
         invalid = [n for n in new_order if n not in existing]
         if invalid:
-            await interaction.response.defer()
+            await interaction.response.defer(ephemeral=True)
             return
         missing = [n for n in existing if n not in new_order]
         new_order += missing
@@ -371,7 +371,7 @@ class ItemDropdownSelector(discord.ui.Select):
         data = load_data()
         items = data["lists"].get(self.list_name, {}).get("items", [])
         if index >= len(items):
-            await interaction.response.defer()
+            await interaction.response.defer(ephemeral=True)
             return
         item = items[index]
         embed = discord.Embed(
@@ -488,7 +488,7 @@ class ManageButton(discord.ui.Button):
 
     async def callback(self, interaction: discord.Interaction):
         if not can_manage(interaction.user):
-            await interaction.response.defer()
+            await interaction.response.defer(ephemeral=True)
             return
         try:
             embed = discord.Embed(
@@ -564,7 +564,7 @@ class PanelView(discord.ui.View):
             data = load_data()
             lst = data["lists"].get(name)
             if not lst:
-                await interaction.response.defer()
+                await interaction.response.defer(ephemeral=True)
                 return
             items = lst.get("items", [])
             embeds = build_separate_embeds(name, items)
@@ -592,29 +592,6 @@ class ListView(discord.ui.View):
         self.add_item(ManageButton(current_list_name, list_names))
         self.add_item(HomeButton())
         self.add_item(RateButton(current_list_name, list_names))
-
-        for name in list_names:
-            btn = discord.ui.Button(
-                label=name,
-                custom_id=f"quick_nav_{name}",
-                style=discord.ButtonStyle.danger,
-                row=1 if len(list_names) <= 5 else 2
-            )
-            btn.callback = self.make_navigation_callback(name)
-            self.add_item(btn)
-
-    def make_navigation_callback(self, name: str):
-        async def callback(interaction: discord.Interaction):
-            data = load_data()
-            lst = data["lists"].get(name)
-            if not lst:
-                await interaction.response.defer()
-                return
-            items = lst.get("items", [])
-            embeds = build_separate_embeds(name, items)
-            view = ListView(name, items, can_manage(interaction.user), self.list_names, data["lists"])
-            await interaction.response.edit_message(embeds=embeds, view=view)
-        return callback
 
 # ─── Global Panel Message Updater ─────────────────────────
 async def update_global_panel_msg(interaction: discord.Interaction, embeds, view):
@@ -718,7 +695,7 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
     traceback.print_exc()
     try:
         if not interaction.response.is_done():
-            await interaction.response.defer()
+            await interaction.response.defer(ephemeral=True)
     except Exception:
         pass
 
@@ -727,9 +704,9 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
 @app_commands.guild_only()
 async def cmd_panel(interaction: discord.Interaction):
     if not can_manage(interaction.user):
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
         return
-    await interaction.response.defer()
+    await interaction.response.defer(ephemeral=True)
     try:
         await refresh_panel_interaction(interaction, interaction.channel)
     except Exception as e:
@@ -741,9 +718,9 @@ async def cmd_panel(interaction: discord.Interaction):
 @app_commands.describe(name="Category name")
 async def cmd_list_create(interaction: discord.Interaction, name: str):
     if not can_manage(interaction.user):
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
         return
-    await interaction.response.defer()
+    await interaction.response.defer(ephemeral=True)
     name = name.strip()
     data = load_data()
     if name not in data["lists"]:
