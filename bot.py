@@ -78,16 +78,16 @@ async def fetch_official_theatrical_details(query: str) -> dict:
         print(f"🚨 [OMDb Error]: {e}")
     return {"title": query, "poster": "", "year": "", "ratings": {}}
 
-# ─── Embeds Builder (تمت الترقية لعرض فيلم واحد فخم) ───
+# ─── Embeds Builder (تنظيف كامل بناءً على ملاحظاتك) ───
 def _build_item_embed(list_name: str, item: dict, real_index: int, total_items: int) -> discord.Embed:
     embed = discord.Embed(color=0xd3beab)
     year = get_year(item)
     
-    # عنوان رئيسي فخم يبين اسم اللستة مع الترتيب والسنة
-    embed.title = f"🎬 {list_name.upper()} • {real_index+1:02d} من {total_items:02d}"
+    # 5. حذف الأيموجي اللي جنب اسم اللستة
+    embed.title = f"{list_name.upper()} • {real_index+1} من {total_items}"
     
-    # اسم العمل بشكل بارز بالداخل مع السنة
-    content = f"**📌 اسم العمل:** {get_title(item)}" + (f" ({year})" if year else "") + "\n"
+    # 5. حذف كلمة (اسم العمل) وإيموجي الدبوس والاكتفاء بالاسم والسنة مباشرة بشكل نظيف
+    content = f"**{get_title(item)}**" + (f" ({year})" if year else "") + "\n"
     
     desc = get_desc(item).strip()
     if desc:
@@ -106,7 +106,7 @@ def _build_item_embed(list_name: str, item: dict, real_index: int, total_items: 
     embed.description = content
     poster = get_poster(item)
     if poster and poster.startswith("http"):
-        embed.set_image(url=poster) # البوستر أصبح كبيراً وفخماً بالأسفل
+        embed.set_image(url=poster)
     return embed
 
 def build_panel_embed(data: dict) -> discord.Embed:
@@ -145,7 +145,7 @@ class RenameListModal(discord.ui.Modal):
         view = PanelView(list_names, data["lists"])
         await interaction.response.edit_message(embeds=[embed], view=view)
 
-# ─── Rating System (يدعم القوائم الكبيرة بنظام الصفحات) ───
+# ─── Rating System ────────────────────────────────────────
 class RateItemSelectView(discord.ui.View):
     def __init__(self, list_name: str, list_names: list[str], items: list, page: int = 0):
         super().__init__(timeout=120)
@@ -155,9 +155,13 @@ class RateItemSelectView(discord.ui.View):
         self.page = page
 
         options = []
-        start = page * 24
-        end = start + 24
+        start = page * 23
+        end = start + 23
         page_items = items[start:end]
+
+        # 3. دعم العودة للصفحة السابقة في التقييم
+        if page > 0:
+            options.append(discord.SelectOption(label=f"◀️ الصفحة السابقة ({start-23+1} - {start})", value="prev_page_rate"))
 
         for i, item in enumerate(page_items):
             real_idx = start + i
@@ -168,9 +172,8 @@ class RateItemSelectView(discord.ui.View):
                 label = label[:97] + "..."
             options.append(discord.SelectOption(label=label, value=str(real_idx)))
 
-        # إذا كانت هناك صفحات أخرى في التقييم
         if len(items) > end:
-            options.append(discord.SelectOption(label=f"▶️ الصفحة التالية ({end+1} - {min(end+24, len(items))})", value="next_page"))
+            options.append(discord.SelectOption(label=f"▶️ الصفحة التالية ({end+1} - {min(end+23, len(items))})", value="next_page_rate"))
 
         select = discord.ui.Select(
             placeholder="اختر العمل المراد تقييمه...",
@@ -180,20 +183,18 @@ class RateItemSelectView(discord.ui.View):
         select.callback = self.on_select
         self.add_item(select)
 
-        # أزرار تحكم إضافية بالأسفل
-        if page > 0:
-            prev_btn = discord.ui.Button(label="◀️ الصفحة السابقة", style=discord.ButtonStyle.secondary, row=1)
-            prev_btn.callback = self.go_prev
-            self.add_item(prev_btn)
-
         cancel_btn = discord.ui.Button(label="إلغاء", style=discord.ButtonStyle.danger, row=1)
         cancel_btn.callback = self.on_cancel
         self.add_item(cancel_btn)
 
     async def on_select(self, interaction: discord.Interaction):
         val = interaction.data["values"][0]
-        if val == "next_page":
+        if val == "next_page_rate":
             view = RateItemSelectView(self.list_name, self.list_names, self.items, self.page + 1)
+            await interaction.response.edit_message(view=view)
+            return
+        elif val == "prev_page_rate":
+            view = RateItemSelectView(self.list_name, self.list_names, self.items, self.page - 1)
             await interaction.response.edit_message(view=view)
             return
 
@@ -207,15 +208,11 @@ class RateItemSelectView(discord.ui.View):
         )
         await interaction.response.edit_message(embeds=[embed], view=view)
 
-    async def go_prev(self, interaction: discord.Interaction):
-        view = RateItemSelectView(self.list_name, self.list_names, self.items, self.page - 1)
-        await interaction.response.edit_message(view=view)
-
     async def on_cancel(self, interaction: discord.Interaction):
         data = load_data()
         items = data["lists"].get(self.list_name, {}).get("items", [])
         if not items:
-            embed = discord.Embed(title=f"Wonderland • {self.list_name.upper()}", description="هذه القائمة فارغة حالياً.", color=0xd3beab)
+            embed = discord.Embed(title=f"{self.list_name.upper()}", description="هذه القائمة فارغة حالياً.", color=0xd3beab)
             view = ListView(self.list_name, items, can_manage(interaction.user), self.list_names, data["lists"], 0)
             await interaction.response.edit_message(embeds=[embed], view=view)
         else:
@@ -291,7 +288,6 @@ class AddItemModal(discord.ui.Modal):
             save_data(data)
             items = data["lists"][self.list_name]["items"]
             
-            # نفتح اللستة تلقائياً على آخر فيلم أُضيف حديثاً ومعه الأسهم والقفز السريع
             last_idx = len(items) - 1
             embed = _build_item_embed(self.list_name, items[last_idx], last_idx, len(items))
             view = ListView(self.list_name, items, can_manage(interaction.user), self.list_names, data["lists"], last_idx)
@@ -336,7 +332,6 @@ class EditItemDetailsModal(discord.ui.Modal):
         items.insert(target_pos - 1, curr_item)
         save_data(data)
         
-        # العودة لصفحة الفيلم بعد التعديل بنجاح لترى التغييرات
         new_idx = target_pos - 1
         embed = _build_item_embed(self.list_name, items[new_idx], new_idx, len(items))
         view = ListView(self.list_name, items, can_manage(interaction.user), self.list_names, data["lists"], new_idx)
@@ -389,16 +384,6 @@ class ReorderListsModal(discord.ui.Modal):
         embed = build_panel_embed(data)
         view = PanelView(list_names, data["lists"])
         await interaction.response.edit_message(embeds=[embed], view=view)
-        
-        panel_info = data.get("panel_message", {})
-        guild_key = str(interaction.guild.id)
-        msg_id = panel_info.get(guild_key)
-        if msg_id:
-            try:
-                msg = await interaction.channel.fetch_message(int(msg_id))
-                await msg.edit(embeds=[embed], view=view)
-            except Exception:
-                pass
 
 # ─── Item Editor Dashboard ────────────────────────────────
 class ItemEditorDashboard(discord.ui.View):
@@ -422,7 +407,7 @@ class ItemEditorDashboard(discord.ui.View):
             save_data(data)
             
         if not items:
-            embed = discord.Embed(title=f"Wonderland • {self.list_name.upper()}", description="هذه القائمة فارغة حالياً.", color=0xd3beab)
+            embed = discord.Embed(title=f"{self.list_name.upper()}", description="هذه القائمة فارغة حالياً.", color=0xd3beab)
             view = ListView(self.list_name, items, can_manage(interaction.user), self.list_names, data["lists"], 0)
         else:
             embed = _build_item_embed(self.list_name, items[0], 0, len(items))
@@ -445,9 +430,9 @@ class ItemEditorDashboard(discord.ui.View):
         )
         await interaction.response.edit_message(embeds=[embed], view=ManageDashboardView(self.list_name, self.list_names))
 
-# ─── Dropdown Components (تمت الترقية بالكامل لنظام الصفحات الفروع للأعمال الكبيرة) ───
+# ─── Dropdowns המעודכנים ──────────────────────────────────
 class ManageItemDropdown(discord.ui.Select):
-    """قائمة منسدلة ذكية في الإدارة لتدعم آلاف الأعمال على شكل صفحات"""
+    """3. يدعم العودة والذهاب بمرونة مطلقة داخل لوحة الإدارة لحل مشكلة الحصار بالصفحات"""
     def __init__(self, list_name: str, list_names: list[str], items: list, page: int = 0):
         self.list_name = list_name
         self.list_names = list_names
@@ -455,9 +440,13 @@ class ManageItemDropdown(discord.ui.Select):
         self.page = page
 
         options = []
-        start = page * 24
-        end = start + 24
+        start = page * 23
+        end = start + 23
         page_items = items[start:end]
+
+        # زر العودة للصفحة السابقة داخل قائمة الخيارات
+        if page > 0:
+            options.append(discord.SelectOption(label=f"◀️ إدارة الصفحة السابقة ({start-23+1} - {start})", value="prev_page_mgr"))
 
         for i, item in enumerate(page_items):
             real_idx = start + i
@@ -468,9 +457,9 @@ class ManageItemDropdown(discord.ui.Select):
                 label = label[:97] + "..."
             options.append(discord.SelectOption(label=label, value=str(real_idx)))
 
-        # إذا كان هناك المزيد من الأعمال؛ نعرض زر الصفحة التالية كخيار ذكي داخل الدون داون
+        # زر التقدم للامام
         if len(items) > end:
-            options.append(discord.SelectOption(label=f"▶️ الصفحة التالية في الإدارة ({end+1} - {min(end+24, len(items))})", value="next_page_mgr"))
+            options.append(discord.SelectOption(label=f"▶️ إدارة الصفحة التالية ({end+1} - {min(end+23, len(items))})", value="next_page_mgr"))
 
         placeholder = f"✏️ تعديل الأعمال ({start+1} - {min(end, len(items))})..." if items else "✏️ تعديل محتويات اللستة..."
         super().__init__(placeholder=placeholder, min_values=1, max_values=1, options=options, row=2)
@@ -479,6 +468,10 @@ class ManageItemDropdown(discord.ui.Select):
         val = self.values[0]
         if val == "next_page_mgr":
             view = ManageDashboardView(self.list_name, self.list_names, self.page + 1)
+            await interaction.response.edit_message(view=view)
+            return
+        elif val == "prev_page_mgr":
+            view = ManageDashboardView(self.list_name, self.list_names, self.page - 1)
             await interaction.response.edit_message(view=view)
             return
 
@@ -497,7 +490,7 @@ class ManageItemDropdown(discord.ui.Select):
 
 
 class JumpToMovieDropdown(discord.ui.Select):
-    """قائمة الانتقال السريع للأعضاء - تدعم صفحات تلقائية لو تجاوزت الأعمال 25"""
+    """3. حل مشكلة القفز السريع والعودة للصفحات السابقة بشكل كامل للأعضاء"""
     def __init__(self, list_name: str, list_names: list[str], items: list, page: int = 0):
         self.list_name = list_name
         self.list_names = list_names
@@ -505,9 +498,13 @@ class JumpToMovieDropdown(discord.ui.Select):
         self.page = page
 
         options = []
-        start = page * 24
-        end = start + 24
+        start = page * 23
+        end = start + 23
         page_items = items[start:end]
+
+        # العودة للصفحة السابقة بالانتقال السريع
+        if page > 0:
+            options.append(discord.SelectOption(label=f"◀️ عرض الصفحة السابقة ({start-23+1} - {start})", value="prev_page_jump"))
 
         for i, item in enumerate(page_items):
             real_idx = start + i
@@ -519,23 +516,27 @@ class JumpToMovieDropdown(discord.ui.Select):
             options.append(discord.SelectOption(label=label, value=str(real_idx)))
 
         if len(items) > end:
-            options.append(discord.SelectOption(label=f"▶️ عرض بقية الأفلام ({end+1} - {min(end+24, len(items))})", value="next_page_jump"))
+            options.append(discord.SelectOption(label=f"▶️ عرض بقية الأفلام ({end+1} - {min(end+23, len(items))})", value="next_page_jump"))
 
-        placeholder = "🔍 اختر فيلماً للانتقال السريع إليه..."
+        placeholder = "🔍 الانتقال السريع إلى عمل آخر..."
         super().__init__(placeholder=placeholder, min_values=1, max_values=1, options=options, row=3)
 
     async def callback(self, interaction: discord.Interaction):
         val = self.values[0]
         if val == "next_page_jump":
             embed = interaction.message.embeds[0]
-            # نحدث القائمة المنسدلة فقط لتكشف الصفحة التالية من خيارات الانتقال
-            view = ListView(self.list_name, self.items, can_manage(interaction.user), self.list_names, load_data()["lists"], current_item_idx=0, jump_page=self.page + 1)
+            view = ListView(self.list_name, self.items, can_manage(interaction.user), self.list_names, load_data()["lists"], current_item_idx=self.page*23, jump_page=self.page + 1)
+            await interaction.response.edit_message(embeds=[embed], view=view)
+            return
+        elif val == "prev_page_jump":
+            embed = interaction.message.embeds[0]
+            view = ListView(self.list_name, self.items, can_manage(interaction.user), self.list_names, load_data()["lists"], current_item_idx=(self.page-1)*23, jump_page=self.page - 1)
             await interaction.response.edit_message(embeds=[embed], view=view)
             return
 
         index = int(val)
         embed = _build_item_embed(self.list_name, self.items[index], index, len(self.items))
-        view = ListView(self.list_name, self.items, can_manage(interaction.user), self.list_names, load_data()["lists"], current_item_idx=index)
+        view = ListView(self.list_name, self.items, can_manage(interaction.user), self.list_names, load_data()["lists"], current_item_idx=index, jump_page=self.page)
         await interaction.response.edit_message(embeds=[embed], view=view)
 
 # ─── Customize List View ──────────────────────────────────
@@ -575,7 +576,7 @@ class CustomizeListView(discord.ui.View):
         )
         await interaction.response.edit_message(embeds=[embed], view=ManageDashboardView(self.list_name, self.list_names))
 
-# ─── Manage Dashboard View (تم دمج نظام صفحات الإدارة داخلها) ───
+# ─── Manage Dashboard View (تحديث وحذف الزر المذكور) ───
 class ManageDashboardView(discord.ui.View):
     def __init__(self, list_name: str, list_names: list[str], page: int = 0):
         super().__init__(timeout=120)
@@ -586,7 +587,6 @@ class ManageDashboardView(discord.ui.View):
         data = load_data()
         items = data["lists"].get(list_name, {}).get("items", [])
         
-        # إضافة الدروب داون المطور الذي يدعم صفحات للإدارة لو تجاوزنا 25 خياراً
         if items:
             self.add_item(ManageItemDropdown(list_name, list_names, items, page))
         else:
@@ -615,21 +615,14 @@ class ManageDashboardView(discord.ui.View):
         data = load_data()
         items = data["lists"].get(self.list_name, {}).get("items", [])
         if not items:
-            embed = discord.Embed(title=f"Wonderland • {self.list_name.upper()}", description="هذه القائمة فارغة حالياً.", color=0xd3beab)
+            embed = discord.Embed(title=f"{self.list_name.upper()}", description="هذه القائمة فارغة حالياً.", color=0xd3beab)
             view = ListView(self.list_name, items, can_manage(interaction.user), self.list_names, data["lists"], 0)
         else:
             embed = _build_item_embed(self.list_name, items[0], 0, len(items))
             view = ListView(self.list_name, items, can_manage(interaction.user), self.list_names, data["lists"], 0)
         await interaction.response.edit_message(embeds=[embed], view=view)
 
-    # زر للرجوع للصفحة السابقة في لوحة الإدارة إذا تنقل المشرف بين صفحات التعديل
-    @discord.ui.button(label="◀️ صفحة إدارة سابقة", style=discord.ButtonStyle.secondary, row=1)
-    async def prev_mgr_page_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if self.page == 0:
-            await interaction.response.defer(ephemeral=True)
-            return
-        view = ManageDashboardView(self.list_name, self.list_names, self.page - 1)
-        await interaction.response.edit_message(view=view)
+    # 4. تم حذف زر "صفحة إدارة سابقة" الذي كان متواجداً هنا بناءً على طلبك.
 
 # ─── Buttons ──────────────────────────────────────────────
 class RateButton(discord.ui.Button):
@@ -681,7 +674,7 @@ class HomeButton(discord.ui.Button):
         view = PanelView(list_names, data["lists"])
         await interaction.response.edit_message(embeds=[embed], view=view)
 
-# ─── Panel View (with pagination for lists) ───────────────
+# ─── Panel View ───────────────────────────────────────────
 class PanelView(discord.ui.View):
     def __init__(self, list_names: list[str], all_lists_data: dict, page: int = 0):
         super().__init__(timeout=None)
@@ -734,10 +727,9 @@ class PanelView(discord.ui.View):
                 return
             items = lst.get("items", [])
             if not items:
-                embed = discord.Embed(title=f"Wonderland • {name.upper()}", description="هذه القائمة فارغة حالياً.", color=0xd3beab)
+                embed = discord.Embed(title=f"{name.upper()}", description="هذه القائمة فارغة حالياً.", color=0xd3beab)
                 view = ListView(name, items, can_manage(interaction.user), self.list_names, data["lists"], 0)
             else:
-                # العرض يبدأ تلقائياً من أول عمل أُضيف بالقائمة كما طلبت
                 embed = _build_item_embed(name, items[0], 0, len(items))
                 view = ListView(name, items, can_manage(interaction.user), self.list_names, data["lists"], 0)
             await interaction.response.edit_message(embeds=[embed], view=view)
@@ -752,7 +744,7 @@ class PanelView(discord.ui.View):
             await interaction.response.edit_message(embeds=[embed], view=view)
         return callback
 
-# ─── List View (تمت الترقية بالكامل لنظام فيلم بفيلم مع الأسهم والقفز) ───
+# ─── List View (تطبيق تحديثات الأزرار والعداد) ───────────
 class ListView(discord.ui.View):
     def __init__(self, current_list_name: str, items: list, is_manager: bool, list_names: list[str], all_lists_data: dict, current_item_idx: int = 0, jump_page: int = 0):
         super().__init__(timeout=None)
@@ -762,33 +754,32 @@ class ListView(discord.ui.View):
         self.items = items
         self.current_item_idx = current_item_idx
 
-        # أزرار الإدارة، الرئيسية، والتقييم في السطر 0
+        # السطر 0 الأزرار العامة
         self.add_item(ManageButton(current_list_name, list_names))
         self.add_item(HomeButton())
         self.add_item(RateButton(current_list_name, list_names))
 
-        # أزرار التنقل بين الأفلام فرداً فرداً (السطر 1)
+        # السطر 1 أزرار التنقل والعداد
         if len(items) > 1:
-            # سهم الحبّة حبة للخلف
-            prev_btn = discord.ui.Button(label="◀️ السابق", style=discord.ButtonStyle.secondary, row=1)
+            # 1. زر السابق بالإيموجي فقط
+            prev_btn = discord.ui.Button(emoji="◀️", style=discord.ButtonStyle.secondary, row=1)
             prev_btn.callback = self.make_move_cb(-1)
             self.add_item(prev_btn)
 
-            # زر المؤشر يعرض مكانك الحالي في اللستة
+            # 2. تعديل صيغة العداد ليصبح مثلاً (8 من 26) مباشرة بدون نصوص إضافية
             indicator_btn = discord.ui.Button(
-                label=f"فيلم {current_item_idx + 1} من {len(items)}",
+                label=f"{current_item_idx + 1} من {len(items)}",
                 style=discord.ButtonStyle.primary,
                 disabled=True,
                 row=1
             )
             self.add_item(indicator_btn)
 
-            # سهم الحبّة حبة للأمام
-            next_btn = discord.ui.Button(label="التالي ▶️", style=discord.ButtonStyle.secondary, row=1)
+            # 1. زر التالي بالإيموجي فقط
+            next_btn = discord.ui.Button(emoji="▶️", style=discord.ButtonStyle.secondary, row=1)
             next_btn.callback = self.make_move_cb(1)
             self.add_item(next_btn)
         else:
-            # لو فيلم واحد فقط، نضع اسم اللستة كمؤشر بسيط
             current_btn = discord.ui.Button(
                 label=current_list_name,
                 style=discord.ButtonStyle.primary,
@@ -797,21 +788,18 @@ class ListView(discord.ui.View):
             )
             self.add_item(current_btn)
 
-        # إضافة قائمة القفز السريع المطور (السطر 3)
         if items:
             self.add_item(JumpToMovieDropdown(current_list_name, list_names, items, jump_page))
 
     def make_move_cb(self, direction: int):
         async def callback(interaction: discord.Interaction):
             new_idx = self.current_item_idx + direction
-            # قفل التنقل التلقائي للحفاظ على الحدود والترتيب السليم
             if new_idx < 0 or new_idx >= len(self.items):
                 await interaction.response.defer(ephemeral=True)
                 return
                 
             embed = _build_item_embed(self.current_list_name, self.items[new_idx], new_idx, len(self.items))
-            # نحسب رقم صفحة القفز السريع المناسبة للفيلم الجديد لتتحرك القائمة تلقائياً معه
-            target_jump_page = new_idx // 24
+            target_jump_page = new_idx // 23
             view = ListView(self.current_list_name, self.items, can_manage(interaction.user), self.list_names, load_data()["lists"], current_item_idx=new_idx, jump_page=target_jump_page)
             await interaction.response.edit_message(embeds=[embed], view=view)
         return callback
@@ -845,7 +833,7 @@ async def refresh_panel_silent(bot: commands.Bot):
                 try:
                     msg = await channel.fetch_message(int(msg_id))
                     await msg.edit(embeds=[embed], view=view)
-                    print(f"✅ [Panel] تم تحديث الباول في #{channel.name}")
+                    print(f"✅ [Panel] تم تحديث البانل في #{channel.name}")
                     break
                 except discord.NotFound:
                     continue
@@ -907,7 +895,7 @@ async def manual_sync(ctx):
         except Exception as e:
             await ctx.send(f"❌ فشلت المزامنة: {e}")
     else:
-        await ctx.send("❌ هذا الأمر للمشرفين فقط.")
+        await ctx.send("❌ هذا أمر للمشرفين فقط.")
 
 @tree.error
 async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
