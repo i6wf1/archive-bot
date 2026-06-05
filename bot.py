@@ -157,39 +157,109 @@ class RenameListModal(discord.ui.Modal):
         await interaction.response.edit_message(embeds=[embed], view=view)
 
 
-class RateItemModal(discord.ui.Modal):
-    def __init__(self, list_name: str, list_names: list[str]):
-        super().__init__(title="تقييم العمل بالنجوم")
+# ─── Rating: Step 1 — اختيار العمل ───────────────────────
+class RateItemSelectView(discord.ui.View):
+    """الخطوة الأولى: اختيار الفيلم/المسلسل من dropdown"""
+    def __init__(self, list_name: str, list_names: list[str], items: list):
+        super().__init__(timeout=120)
         self.list_name = list_name
         self.list_names = list_names
-        self.item_number = discord.ui.TextInput(label="رقم الفيلم المراد تقييمه", placeholder="مثال: 1", required=True)
-        self.user_rating = discord.ui.TextInput(label="التقييم (أدخل رقم من 1 إلى 5 فقط)", placeholder="1 أو 2 أو 3 أو 4 أو 5", min_length=1, max_length=1, required=True)
-        self.add_item(self.item_number)
-        self.add_item(self.user_rating)
+        self.items = items
 
-    async def on_submit(self, interaction: discord.Interaction):
-        try:
-            num = int(self.item_number.value)
-            stars = int(self.user_rating.value)
-            if stars < 1 or stars > 5:
-                raise ValueError
-        except ValueError:
-            await interaction.response.defer(ephemeral=True)
-            return
+        options = []
+        for i, item in enumerate(items[:25]):
+            title = get_title(item)
+            year = get_year(item)
+            label = f"{i+1:02d}. {title}" + (f" ({year})" if year else "")
+            if len(label) > 100:
+                label = label[:97] + "..."
+            options.append(discord.SelectOption(label=label, value=str(i)))
+
+        select = discord.ui.Select(
+            placeholder="اختر العمل المراد تقييمه...",
+            min_values=1, max_values=1,
+            options=options, row=0
+        )
+        select.callback = self.on_select
+        self.add_item(select)
+
+        # زر إلغاء
+        cancel_btn = discord.ui.Button(label="إلغاء", style=discord.ButtonStyle.secondary, row=1)
+        cancel_btn.callback = self.on_cancel
+        self.add_item(cancel_btn)
+
+    async def on_select(self, interaction: discord.Interaction):
+        index = int(interaction.data["values"][0])
+        item = self.items[index]
+        # الخطوة الثانية: اختيار عدد النجوم
+        view = RateStarsView(self.list_name, self.list_names, index, item)
+        embed = discord.Embed(
+            title=f"⭐ تقييم العمل",
+            description=f"**{get_title(item)}**\nاختر عدد النجوم:",
+            color=0xd3beab
+        )
+        await interaction.response.edit_message(embeds=[embed], view=view)
+
+    async def on_cancel(self, interaction: discord.Interaction):
         data = load_data()
         items = data["lists"].get(self.list_name, {}).get("items", [])
-        if num < 1 or num > len(items):
-            await interaction.response.defer(ephemeral=True)
-            return
-        user_key = interaction.user.display_name
-        if "ratings" not in items[num - 1] or not isinstance(items[num - 1]["ratings"], dict):
-            items[num - 1]["ratings"] = {}
-        items[num - 1]["ratings"][user_key] = stars
-        save_data(data)
+        embeds = build_separate_embeds(self.list_name, items)
+        view = ListView(self.list_name, items, can_manage(interaction.user), self.list_names, data["lists"])
+        await interaction.response.edit_message(embeds=embeds, view=view)
+
+
+# ─── Rating: Step 2 — اختيار النجوم ──────────────────────
+class RateStarsView(discord.ui.View):
+    """الخطوة الثانية: اختيار عدد النجوم"""
+    def __init__(self, list_name: str, list_names: list[str], index: int, item: dict):
+        super().__init__(timeout=120)
+        self.list_name = list_name
+        self.list_names = list_names
+        self.index = index
+        self.item = item
+
+        stars_options = [
+            discord.SelectOption(label="⭐ نجمة واحدة", value="1"),
+            discord.SelectOption(label="⭐⭐ نجمتان", value="2"),
+            discord.SelectOption(label="⭐⭐⭐ ثلاث نجوم", value="3"),
+            discord.SelectOption(label="⭐⭐⭐⭐ أربع نجوم", value="4"),
+            discord.SelectOption(label="⭐⭐⭐⭐⭐ خمس نجوم", value="5"),
+        ]
+        select = discord.ui.Select(
+            placeholder="اختر عدد النجوم...",
+            min_values=1, max_values=1,
+            options=stars_options, row=0
+        )
+        select.callback = self.on_stars_select
+        self.add_item(select)
+
+        back_btn = discord.ui.Button(label="⬅️ رجوع", style=discord.ButtonStyle.secondary, row=1)
+        back_btn.callback = self.on_back
+        self.add_item(back_btn)
+
+    async def on_stars_select(self, interaction: discord.Interaction):
+        stars = int(interaction.data["values"][0])
+        data = load_data()
+        items = data["lists"].get(self.list_name, {}).get("items", [])
+        if 0 <= self.index < len(items):
+            if "ratings" not in items[self.index] or not isinstance(items[self.index]["ratings"], dict):
+                items[self.index]["ratings"] = {}
+            items[self.index]["ratings"][interaction.user.display_name] = stars
+            save_data(data)
         embeds = build_separate_embeds(self.list_name, items)
         view = ListView(self.list_name, items, can_manage(interaction.user), self.list_names, data["lists"])
         await interaction.response.edit_message(embeds=embeds, view=view)
         await update_global_panel_msg(interaction, embeds, view)
+
+    async def on_back(self, interaction: discord.Interaction):
+        data = load_data()
+        items = data["lists"].get(self.list_name, {}).get("items", [])
+        embed = discord.Embed(
+            title="⭐ تقييم العمل",
+            description="اختر العمل المراد تقييمه:",
+            color=0xd3beab
+        )
+        await interaction.response.edit_message(embeds=[embed], view=RateItemSelectView(self.list_name, self.list_names, items))
 
 
 class AddItemModal(discord.ui.Modal):
@@ -477,7 +547,17 @@ class RateButton(discord.ui.Button):
         self.list_names = list_names
 
     async def callback(self, interaction: discord.Interaction):
-        await interaction.response.send_modal(RateItemModal(self.list_name, self.list_names))
+        data = load_data()
+        items = data["lists"].get(self.list_name, {}).get("items", [])
+        if not items:
+            await interaction.response.defer(ephemeral=True)
+            return
+        embed = discord.Embed(
+            title="⭐ تقييم العمل",
+            description="اختر العمل المراد تقييمه:",
+            color=0xd3beab
+        )
+        await interaction.response.edit_message(embeds=[embed], view=RateItemSelectView(self.list_name, self.list_names, items))
 
 
 class ManageButton(discord.ui.Button):
@@ -712,10 +792,7 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
 @tree.command(name="panel", description="Post/refresh the main dashboard.")
 @app_commands.guild_only()
 async def cmd_panel(interaction: discord.Interaction):
-    # رد فوري صامت ثم نحذفه — بدون defer حتى لا يظهر "thinking"
     await interaction.response.send_message(".", ephemeral=True, delete_after=0)
-    if not can_manage(interaction.user):
-        return
     try:
         await refresh_panel_interaction(interaction, interaction.channel)
     except Exception as e:
