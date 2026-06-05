@@ -7,6 +7,7 @@ import urllib.parse
 import aiohttp
 from pathlib import Path
 import traceback
+import asyncio
 
 # ─── Config ───────────────────────────────────────────────
 DATA_FILE = "data/lists.json"
@@ -83,17 +84,7 @@ def _build_item_embed(list_name: str, item: dict, real_index: int, total_items: 
     embed = discord.Embed(color=0xd3beab)
     year = get_year(item)
     
-    # جلب وصف اللستة العام من البيانات
-    list_data = all_lists_data.get(list_name, {})
-    list_description = list_data.get("description", "").strip()
-    
-    # طباعة اسم اللستة ووصفها تحته مباشرة بشكل مائل ونظيف بدون كلمة "الوصف"
-    author_text = f"🔴 List: {list_name.upper()}"
-    if list_description:
-        author_text += f"\n*{list_description}*"
-    embed.set_author(name=author_text)
-    
-    # 4. وضع رقم الفيلم باللستة (فقط الرقم) بجانب اسم الفيلم في الإمبد
+    embed.set_author(name=f"🔴 List: {list_name.upper()}")
     embed.title = f"[{real_index + 1}] {get_title(item)}" + (f" ({year})" if year else "")
     
     content = ""
@@ -124,20 +115,28 @@ def build_panel_embed(data: dict) -> discord.Embed:
     if list_names:
         lines = []
         for k, v in data["lists"].items():
-            desc_line = f"\n*{v.get('description', '')}*" if v.get('description', '').strip() else ""
-            lines.append(f"🔴 **{k.upper()}** —  `{len(v.get('items', []))} Entries`{desc_line}")
+            lines.append(f"🔴 **{k.upper()}** —  `{len(v.get('items', []))} Entries`")
         lines_str = "\n".join(lines)
     else:
         lines_str = "لا توجد قوائم متوفرة حالياً."
     return discord.Embed(title="🌿 Wonderland Lists", description=f"\n{lines_str}\n", color=0xd3beab)
 
-# ─── Close Button UI Helper ──────────────────────────────
-class EphemeralCloseButton(discord.ui.Button):
-    def __init__(self):
-        super().__init__(label="إغلاق", emoji="❌", style=discord.ButtonStyle.danger, row=4)
+# ─── Ephemeral Reaction Listener Helper ───────────────────
+async def setup_ephemeral_close_reaction(interaction: discord.Interaction):
+    try:
+        msg = await interaction.original_response()
+        await msg.add_reaction("❌")
 
-    async def callback(self, interaction: discord.Interaction):
-        await interaction.response.delete_original_message()
+        def check(reaction, user):
+            return user.id == interaction.user.id and str(reaction.emoji) == "❌" and reaction.message.id == msg.id
+
+        try:
+            await interaction.client.wait_for("reaction_add", check=check)
+            await interaction.delete_original_message()
+        except Exception:
+            pass
+    except Exception as e:
+        print(f"🚨 [Reaction Close Error]: {e}")
 
 # ─── Modals ───────────────────────────────────────────────
 class RenameListModal(discord.ui.Modal):
@@ -166,39 +165,6 @@ class RenameListModal(discord.ui.Modal):
             color=0x5865F2
         )
         cust_view = CustomizeListView(new_list_name, list(data["lists"].keys()))
-        await interaction.response.edit_message(embeds=[embed], view=cust_view)
-        
-        # تحديث البانل الرئيسي العام بصمت
-        await refresh_panel_silent(interaction.client)
-
-class EditListDescriptionModal(discord.ui.Modal):
-    def __init__(self, list_name: str, list_names: list[str]):
-        super().__init__(title="تعديل وصف اللستة")
-        self.list_name = list_name
-        self.list_names = list_names
-        data = load_data()
-        current_desc = data["lists"].get(list_name, {}).get("description", "")
-        self.new_desc = discord.ui.TextInput(
-            label="الوصف الجديد (يظهر تحت اسم اللستة)",
-            style=discord.TextStyle.paragraph,
-            default=current_desc,
-            required=False,
-            placeholder="مثال: هذه اللستة مخصصة لأفلام مارفل"
-        )
-        self.add_item(self.new_desc)
-
-    async def on_submit(self, interaction: discord.Interaction):
-        data = load_data()
-        if self.list_name in data["lists"]:
-            data["lists"][self.list_name]["description"] = self.new_desc.value.strip()
-            save_data(data)
-            
-        embed = discord.Embed(
-            title=f"تخصيص اللستة — {self.list_name}",
-            description="اختر الإجراء المطلوب:\n\n🗑️ **حذف اللستة بالكامل**\n📝 **تعديل اسم اللستة**\n🔀 **تغيير ترتيب اللستات**",
-            color=0x5865F2
-        )
-        cust_view = CustomizeListView(self.list_name, self.list_names)
         await interaction.response.edit_message(embeds=[embed], view=cust_view)
         await refresh_panel_silent(interaction.client)
 
@@ -239,7 +205,6 @@ class RateItemSelectView(discord.ui.View):
         )
         select.callback = self.on_select
         self.add_item(select)
-        self.add_item(EphemeralCloseButton())
 
     async def on_select(self, interaction: discord.Interaction):
         val = interaction.data["values"][0]
@@ -283,7 +248,6 @@ class RateStarsView(discord.ui.View):
         )
         select.callback = self.on_stars_select
         self.add_item(select)
-        self.add_item(EphemeralCloseButton())
 
     async def on_stars_select(self, interaction: discord.Interaction):
         stars = int(interaction.data["values"][0])
@@ -295,14 +259,12 @@ class RateStarsView(discord.ui.View):
             items[self.index]["ratings"][interaction.user.display_name] = stars
             save_data(data)
             
-        # إشعار بنجاح التقييم وحذف الرسالة المخفية
         await interaction.response.send_message(f"✅ تم تسجيل تقييمك ({stars} نجوم) لـ **{get_title(items[self.index])}** بنجاح!", ephemeral=True)
         try:
             await interaction.delete_original_message()
         except Exception:
             pass
             
-        # تحديث الرسالة العامة الأساسية ليرى الجميع التقييم الجديد فورا
         await update_global_list_message(interaction, self.list_name, self.origin_index)
 
 # ─── Global Message Update Helper ────────────────────────
@@ -460,7 +422,6 @@ class ItemEditorDashboard(discord.ui.View):
             items.pop(self.index)
             save_data(data)
             
-        # تحديث الرسالة العامة
         panel_info = data.get("panel_message", {})
         guild_key = str(interaction.guild.id)
         msg_id = panel_info.get(guild_key)
@@ -612,10 +573,6 @@ class CustomizeListView(discord.ui.View):
     async def rename_list_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(RenameListModal(self.list_name))
 
-    @discord.ui.button(label="✍️ وصف اللستة", style=discord.ButtonStyle.blurple, row=0)
-    async def edit_desc_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(EditListDescriptionModal(self.list_name, self.list_names))
-
     @discord.ui.button(label="❌ حذف اللستة", style=discord.ButtonStyle.danger, row=0)
     async def delete_list_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         data = load_data()
@@ -659,7 +616,6 @@ class ManageDashboardView(discord.ui.View):
                 options=[discord.SelectOption(label="قائمة الأفلام فارغة تماماً", value="empty_fallback")],
                 row=2
             ))
-        self.add_item(EphemeralCloseButton())
 
     @discord.ui.button(emoji="➕", style=discord.ButtonStyle.primary, row=0)
     async def add_item_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -690,11 +646,16 @@ class RateButton(discord.ui.Button):
             await interaction.response.defer(ephemeral=True)
             return
         
-        # 2. إرسال لوحة التقييم بالكامل في رسالة مخفية (Ephemeral)
-        embed = discord.Embed(title="⭐ قائمة التقييم السريعة", description="اختر العمل الذي ترغب في تقييمه من القائمة المنسدلة بالأسفل.", color=0xd3beab)
+        embed = discord.Embed(
+            title="⭐ قائمة التقييم السريعة", 
+            description="اختر العمل الذي ترغب في تقييمه من القائمة المنسدلة بالأسفل.\n\n❌ *اضغط على ريأكشن الاكس بالأسفل لإغلاق هذه اللوحة في أي وقت.*", 
+            color=0xd3beab
+        )
         target_page = self.origin_index // 23
         rate_view = RateItemSelectView(self.list_name, self.list_names, items, target_page, self.origin_index)
         await interaction.response.send_message(embeds=[embed], view=rate_view, ephemeral=True)
+        
+        asyncio.create_task(setup_ephemeral_close_reaction(interaction))
 
 
 class ManageButton(discord.ui.Button):
@@ -708,14 +669,15 @@ class ManageButton(discord.ui.Button):
             await interaction.response.send_message("❌ لا تملك الصلاحيات الكافية (Archive Manager) لاستخدام لوحة التحكم.", ephemeral=True)
             return
         try:
-            # 2. إرسال لوحة التحكم بالكامل في رسالة مخفية يراها الإدمن فقط ومزودة بزر الإغلاق
             embed = discord.Embed(
                 title=f"إدارة — {self.list_name}",
-                description="التحكم الكامل والذكي بمحتوى وتعديل القائمة، ترتيب الأعمال، تغيير اسم اللستة أو حذفها.",
+                description="التحكم الكامل والذكي بمحتوى وتعديل القائمة، ترتيب الأعمال، تغيير اسم اللستة أو حذفها.\n\n❌ *اضغط على ريأكشن الاكس بالأسفل لإغلاق هذه اللوحة في أي وقت.*",
                 color=0xd3beab
             )
             dash_view = ManageDashboardView(self.list_name, self.list_names, 0)
             await interaction.response.send_message(embeds=[embed], view=dash_view, ephemeral=True)
+            
+            asyncio.create_task(setup_ephemeral_close_reaction(interaction))
         except Exception as e:
             print(f"🚨 خطأ أثناء فتح لوحة التحكم: {e}")
             traceback.print_exc()
@@ -786,10 +748,6 @@ class PanelView(discord.ui.View):
             items = lst.get("items", [])
             if not items:
                 embed = discord.Embed(title=f"{name.upper()}", description="هذه القائمة فارغة حالياً.", color=0xd3beab)
-                # تمرير وصف اللستة المناسب
-                list_description = lst.get("description", "").strip()
-                if list_description:
-                    embed.set_author(name=f"🔴 List: {name.upper()}\n*{list_description}*")
                 view = ListView(name, items, can_manage(interaction.user), self.list_names, data["lists"], 0)
             else:
                 embed = _build_item_embed(name, items[0], 0, len(items), data["lists"])
@@ -825,7 +783,6 @@ class ListView(discord.ui.View):
             prev_btn.callback = self.make_move_cb(-1)
             self.add_item(prev_btn)
 
-            # 1. إرجاع حركة الترقيم بسلاش مثل 1/23 بناء على طلبك
             indicator_btn = discord.ui.Button(
                 label=f"{current_item_idx + 1}/{len(items)}",
                 style=discord.ButtonStyle.primary,
@@ -975,7 +932,7 @@ async def cmd_list_create(interaction: discord.Interaction, name: str):
     name = name.strip()
     data = load_data()
     if name not in data["lists"]:
-        data["lists"][name] = {"description": "", "items": []}
+        data["lists"][name] = {"items": []}
         save_data(data)
         await refresh_panel_silent(interaction.client)
 
