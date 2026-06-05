@@ -184,7 +184,7 @@ class RateItemSelectView(discord.ui.View):
         page_items = items[start:end]
 
         if page > 0:
-            options.append(discord.SelectOption(label=f"◀️ الصفحة السابقة ({start-23+1} - {start})", value="prev_page_rate"))
+            options.append(discord.SelectOption(label="◀️ الصفحة السابقة", value="prev_page_rate"))
 
         for i, item in enumerate(page_items):
             real_idx = start + i
@@ -196,7 +196,7 @@ class RateItemSelectView(discord.ui.View):
             options.append(discord.SelectOption(label=label, value=str(real_idx)))
 
         if len(items) > end:
-            options.append(discord.SelectOption(label=f"▶️ الصفحة التالية ({end+1} - {min(end+23, len(items))})", value="next_page_rate"))
+            options.append(discord.SelectOption(label="▶️ الصفحة التالية", value="next_page_rate"))
 
         select = discord.ui.Select(
             placeholder="⭐ اختر العمل المراد تقييمه...",
@@ -250,6 +250,8 @@ class RateStarsView(discord.ui.View):
         self.add_item(select)
 
     async def on_stars_select(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        
         stars = int(interaction.data["values"][0])
         data = load_data()
         items = data["lists"].get(self.list_name, {}).get("items", [])
@@ -259,7 +261,6 @@ class RateStarsView(discord.ui.View):
             items[self.index]["ratings"][interaction.user.display_name] = stars
             save_data(data)
             
-        # نقوم بحذف الرسالة المخفية بالكامل فوراً لعدم إزعاج المستخدم
         try:
             await interaction.delete_original_response()
         except Exception:
@@ -293,7 +294,7 @@ class AddItemModal(discord.ui.Modal):
         self.list_name = list_name
         self.list_names = list_names
         self.item_title = discord.ui.TextInput(label="اسم الفيلم أو المسلسل (للبحث)", placeholder="مثال: Iron Man", required=True)
-        self.item_desc = discord.ui.TextInput(label="الوصف أو تقييمك الخاص", style=discord.TextStyle.paragraph, required=False, placeholder="يمكنك ترك هذا الحقل فارغاً تماماً...")
+        self.item_desc = discord.ui.TextInput(label="الوصف أو تقييمك الخاص", style=discord.TextStyle.paragraph, required=False, placeholder="يمكنك ترك this الحقل فارغاً تماماً...")
         self.add_item(self.item_title)
         self.add_item(self.item_desc)
 
@@ -470,7 +471,7 @@ class ManageItemDropdown(discord.ui.Select):
         page_items = items[start:end]
 
         if page > 0:
-            options.append(discord.SelectOption(label=f"◀️ إدارة الصفحة السابقة ({start-23+1} - {start})", value="prev_page_mgr"))
+            options.append(discord.SelectOption(label="◀️ الصفحة السابقة", value="prev_page_mgr"))
 
         for i, item in enumerate(page_items):
             real_idx = start + i
@@ -482,7 +483,7 @@ class ManageItemDropdown(discord.ui.Select):
             options.append(discord.SelectOption(label=label, value=str(real_idx)))
 
         if len(items) > end:
-            options.append(discord.SelectOption(label=f"▶️ إدارة الصفحة التالية ({end+1} - {min(end+23, len(items))})", value="next_page_mgr"))
+            options.append(discord.SelectOption(label="▶️ الصفحة التالية", value="next_page_mgr"))
 
         placeholder = f"✏️ تعديل الأعمال ({start+1} - {min(end, len(items))})..." if items else "✏️ تعديل محتويات اللستة..."
         super().__init__(placeholder=placeholder, min_values=1, max_values=1, options=options, row=2)
@@ -526,7 +527,7 @@ class JumpToMovieDropdown(discord.ui.Select):
         page_items = items[start:end]
 
         if page > 0:
-            options.append(discord.SelectOption(label=f"◀️ عرض الصفحة السابقة", value="prev_page_jump"))
+            options.append(discord.SelectOption(label="◀️ الصفحة السابقة", value="prev_page_jump"))
 
         for i, item in enumerate(page_items):
             real_idx = start + i
@@ -538,7 +539,7 @@ class JumpToMovieDropdown(discord.ui.Select):
             options.append(discord.SelectOption(label=label, value=str(real_idx)))
 
         if len(items) > end:
-            options.append(discord.SelectOption(label=f"▶️ عرض بقية الأفلام", value="next_page_jump"))
+            options.append(discord.SelectOption(label="▶️ الصفحة التالية", value="next_page_jump"))
 
         placeholder = "🔍 الانتقال السريع..."
         super().__init__(placeholder=placeholder, min_values=1, max_values=1, options=options, row=3)
@@ -688,7 +689,6 @@ class HomeButton(discord.ui.Button):
         super().__init__(emoji="🏠", style=discord.ButtonStyle.success, row=0)
 
     async def callback(self, interaction: discord.Interaction):
-        # تم التعديل ليعود للرئيسية في نفس الرسالة تماماً دون فتح رسالة جديدة
         data = load_data()
         list_names = list(data["lists"].keys())
         embed = build_panel_embed(data)
@@ -784,7 +784,6 @@ class ListView(discord.ui.View):
             prev_btn.callback = self.make_move_cb(-1)
             self.add_item(prev_btn)
 
-            # التعديل: الزر الآن غيـر معطل (disabled=False) حتى لا يصبح باهتاً، ولكنه لا يتفاعل عند الضغط
             indicator_btn = discord.ui.Button(
                 label=f"{current_item_idx + 1}/{len(items)}",
                 style=discord.ButtonStyle.primary,
@@ -811,7 +810,6 @@ class ListView(discord.ui.View):
             self.add_item(JumpToMovieDropdown(current_list_name, list_names, items, jump_page))
 
     async def prevent_interaction_cb(self, interaction: discord.Interaction):
-        # يقوم فقط بتهدئة الديسكورد دون تغيير أي شيء، ليبقى الزر واضح اللون وبدون استجابة فعلية
         await interaction.response.defer()
 
     def make_move_cb(self, direction: int):
