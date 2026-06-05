@@ -80,37 +80,47 @@ async def fetch_official_theatrical_details(query: str) -> dict:
     return {"title": query, "poster": "", "year": "", "ratings": {}}
 
 # ─── Embeds Builder ───────────────────────────────────────
+ITEMS_PER_PAGE = 10
+
+def _build_item_embed(item: dict, real_index: int) -> discord.Embed:
+    embed = discord.Embed(color=0xd3beab)
+    year = get_year(item)
+    embed.title = f"{real_index+1:02d}. {get_title(item)} ({year})" if year else f"{real_index+1:02d}. {get_title(item)}"
+    desc = get_desc(item).strip()
+    ratings = get_ratings(item)
+    content = desc if desc else ""
+    if ratings:
+        if content:
+            content += "\n\n"
+        content += "**👥 تقييمات الأعضاء:**"
+        for user_name, star_count in ratings.items():
+            try:
+                stars_display = "⭐" * int(star_count)
+            except ValueError:
+                stars_display = "⭐"
+            content += f"\n▫️ {user_name}: {stars_display}"
+    embed.description = content if content else None
+    poster = get_poster(item)
+    if poster and poster.startswith("http"):
+        embed.set_thumbnail(url=poster)
+    return embed
+
 def build_separate_embeds(list_name: str, items: list) -> list[discord.Embed]:
+    """للتوافق مع الكود القديم — يعرض الصفحة الأولى فقط"""
     if not items:
-        return [discord.Embed(
-            title=f"Wonderland • {list_name.upper()}",
-            description="هذه القائمة فارغة حالياً.",
-            color=0xd3beab
-        )]
-    embeds = []
-    for i, item in enumerate(items[:10]):
-        embed = discord.Embed(color=0xd3beab)
-        year = get_year(item)
-        embed.title = f"{i+1:02d}. {get_title(item)} ({year})" if year else f"{i+1:02d}. {get_title(item)}"
-        desc = get_desc(item).strip()
-        ratings = get_ratings(item)
-        content = desc if desc else ""
-        if ratings:
-            if content:
-                content += "\n\n"
-            content += "**👥 تقييمات الأعضاء:**"
-            for user_name, star_count in ratings.items():
-                try:
-                    stars_display = "⭐" * int(star_count)
-                except ValueError:
-                    stars_display = "⭐"
-                content += f"\n▫️ {user_name}: {stars_display}"
-        embed.description = content if content else None
-        poster = get_poster(item)
-        if poster and poster.startswith("http"):
-            embed.set_thumbnail(url=poster)
-        embeds.append(embed)
-    return embeds
+        return [discord.Embed(title=f"Wonderland • {list_name.upper()}", description="هذه القائمة فارغة حالياً.", color=0xd3beab)]
+    return [_build_item_embed(item, i) for i, item in enumerate(items[:ITEMS_PER_PAGE])]
+
+def get_page_embeds(list_name: str, items: list, page: int = 0):
+    """ترجع (embeds الصفحة, رقم الصفحة الفعلي, إجمالي الصفحات)"""
+    total_pages = max(1, (len(items) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE)
+    page = max(0, min(page, total_pages - 1))
+    start = page * ITEMS_PER_PAGE
+    page_items = items[start:start + ITEMS_PER_PAGE]
+    if not page_items:
+        return [discord.Embed(title=f"Wonderland • {list_name.upper()}", description="هذه القائمة فارغة حالياً.", color=0xd3beab)], 0, 1
+    embeds = [_build_item_embed(item, start + i) for i, item in enumerate(page_items)]
+    return embeds, page, total_pages
 
 def build_panel_embed(data: dict) -> discord.Embed:
     list_names = list(data["lists"].keys())
@@ -203,7 +213,7 @@ class RateItemSelectView(discord.ui.View):
     async def on_cancel(self, interaction: discord.Interaction):
         data = load_data()
         items = data["lists"].get(self.list_name, {}).get("items", [])
-        embeds = build_separate_embeds(self.list_name, items)
+        embeds, _pg, _ = get_page_embeds(self.list_name, items)
         view = ListView(self.list_name, items, can_manage(interaction.user), self.list_names, data["lists"])
         await interaction.response.edit_message(embeds=embeds, view=view)
 
@@ -246,7 +256,7 @@ class RateStarsView(discord.ui.View):
                 items[self.index]["ratings"] = {}
             items[self.index]["ratings"][interaction.user.display_name] = stars
             save_data(data)
-        embeds = build_separate_embeds(self.list_name, items)
+        embeds, _pg, _ = get_page_embeds(self.list_name, items)
         view = ListView(self.list_name, items, can_manage(interaction.user), self.list_names, data["lists"])
         await interaction.response.edit_message(embeds=embeds, view=view)
         await update_global_panel_msg(interaction, embeds, view)
@@ -281,7 +291,7 @@ class AddItemModal(discord.ui.Modal):
             data["lists"][self.list_name]["items"].append(details)
             save_data(data)
             items = data["lists"][self.list_name]["items"]
-            embeds = build_separate_embeds(self.list_name, items)
+            embeds, _pg, _ = get_page_embeds(self.list_name, items)
             view = ListView(self.list_name, items, can_manage(interaction.user), self.list_names, data["lists"])
             await update_global_panel_msg(interaction, embeds, view)
         # Return to manage dashboard silently
@@ -324,7 +334,7 @@ class EditItemDetailsModal(discord.ui.Modal):
         curr_item["year"] = self.new_year.value.strip()
         items.insert(target_pos - 1, curr_item)
         save_data(data)
-        embeds = build_separate_embeds(self.list_name, items)
+        embeds, _pg, _ = get_page_embeds(self.list_name, items)
         view = ListView(self.list_name, items, can_manage(interaction.user), self.list_names, data["lists"])
         await update_global_panel_msg(interaction, embeds, view)
         mgr_embed = discord.Embed(
@@ -406,7 +416,7 @@ class ItemEditorDashboard(discord.ui.View):
         if 0 <= self.index < len(items):
             items.pop(self.index)
             save_data(data)
-        embeds = build_separate_embeds(self.list_name, items)
+        embeds, _pg, _ = get_page_embeds(self.list_name, items)
         view = ListView(self.list_name, items, can_manage(interaction.user), self.list_names, data["lists"])
         await update_global_panel_msg(interaction, embeds, view)
         mgr_embed = discord.Embed(
@@ -535,7 +545,7 @@ class ManageDashboardView(discord.ui.View):
     async def back_to_view(self, interaction: discord.Interaction, button: discord.ui.Button):
         data = load_data()
         items = data["lists"].get(self.list_name, {}).get("items", [])
-        embeds = build_separate_embeds(self.list_name, items)
+        embeds, _pg, _ = get_page_embeds(self.list_name, items)
         view = ListView(self.list_name, items, can_manage(interaction.user), self.list_names, data["lists"])
         await interaction.response.edit_message(embeds=embeds, view=view)
 
@@ -647,7 +657,7 @@ class PanelView(discord.ui.View):
                 await interaction.response.defer(ephemeral=True)
                 return
             items = lst.get("items", [])
-            embeds = build_separate_embeds(name, items)
+            embeds, _pg, _ = get_page_embeds(name, items)
             view = ListView(name, items, can_manage(interaction.user), self.list_names, data["lists"])
             await interaction.response.edit_message(embeds=embeds, view=view)
         return callback
@@ -663,17 +673,21 @@ class PanelView(discord.ui.View):
 
 # ─── List View ────────────────────────────────────────────
 class ListView(discord.ui.View):
-    def __init__(self, current_list_name: str, items: list, is_manager: bool, list_names: list[str], all_lists_data: dict):
+    def __init__(self, current_list_name: str, items: list, is_manager: bool, list_names: list[str], all_lists_data: dict, page: int = 0):
         super().__init__(timeout=None)
         self.current_list_name = current_list_name
         self.list_names = list_names
         self.all_lists_data = all_lists_data
+        self.items = items
+        self.page = page
+
+        total_pages = max(1, (len(items) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE)
 
         self.add_item(ManageButton(current_list_name, list_names))
         self.add_item(HomeButton())
         self.add_item(RateButton(current_list_name, list_names))
 
-        # زر اللستة الحالية كـ indicator — disabled ومضيء يوضح للمستخدم وين هو
+        # زر اللستة الحالية كـ indicator
         current_btn = discord.ui.Button(
             label=current_list_name,
             style=discord.ButtonStyle.primary,
@@ -681,6 +695,35 @@ class ListView(discord.ui.View):
             row=1
         )
         self.add_item(current_btn)
+
+        # أزرار التنقل بين الصفحات (row=2) — تظهر فقط لو أكثر من صفحة
+        if total_pages > 1:
+            if page > 0:
+                prev_btn = discord.ui.Button(label="◀", style=discord.ButtonStyle.secondary, row=2, custom_id=f"lv_prev_{page}")
+                prev_btn.callback = self.make_page_cb(page - 1)
+                self.add_item(prev_btn)
+
+            page_btn = discord.ui.Button(
+                label=f"{page + 1} / {total_pages}",
+                style=discord.ButtonStyle.secondary,
+                disabled=True, row=2,
+                custom_id="lv_page_ind"
+            )
+            self.add_item(page_btn)
+
+            if page < total_pages - 1:
+                next_btn = discord.ui.Button(label="▶", style=discord.ButtonStyle.secondary, row=2, custom_id=f"lv_next_{page}")
+                next_btn.callback = self.make_page_cb(page + 1)
+                self.add_item(next_btn)
+
+    def make_page_cb(self, new_page: int):
+        async def callback(interaction: discord.Interaction):
+            data = load_data()
+            items = data["lists"].get(self.current_list_name, {}).get("items", [])
+            embeds, pg, _ = get_page_embeds(self.current_list_name, items, new_page)
+            view = ListView(self.current_list_name, items, can_manage(interaction.user), self.list_names, data["lists"], pg)
+            await interaction.response.edit_message(embeds=embeds, view=view)
+        return callback
 
 # ─── Global Panel Message Updater ─────────────────────────
 async def update_global_panel_msg(interaction: discord.Interaction, embeds, view):
